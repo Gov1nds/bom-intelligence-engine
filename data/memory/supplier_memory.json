@@ -1,0 +1,154 @@
+{
+  "suppliers": {
+    "KR_dist_0": {
+      "cost_buffer_pct": 0.1,
+      "time_buffer_days": 3,
+      "variance": 0.5,
+      "orders": 0,
+      "selections": 1,
+      "defect_rate": 0.0,
+      "on_time_rate": 1.0,
+      "avg_tlc": 22787.106
+    },
+    "TH_dist_1": {
+      "cost_buffer_pct": 0.1,
+      "time_buffer_days": 3,
+      "variance": 0.5,
+      "orders": 0,
+      "selections": 1,
+      "defect_rate": 0.0,
+      "on_time_rate": 1.0,
+      "avg_tlc": 3400.144
+    },
+    "KR_dist_1": {
+      "cost_buffer_pct": 0.1,
+      "time_buffer_days": 3,
+      "variance": 0.5,
+      "orders": 0,
+      "selections": 1,
+      "defect_rate": 0.0,
+      "on_time_rate": 1.0,
+      "avg_tlc": 2167.9425
+    },
+    "IN_dist_1": {
+      "cost_buffer_pct": 0.1,
+      "time_buffer_days": 3,
+      "variance": 0.5,
+      "orders": 0,
+      "selections": 1,
+      "defect_rate": 0.0,
+      "on_time_rate": 1.0,
+      "avg_tlc": 300.8107
+    },
+    "US_mfg_0": {
+      "cost_buffer_pct": 0.1,
+      "time_buffer_days": 3,
+      "variance": 0.5,
+      "orders": 0,
+      "selections": 1,
+      "defect_rate": 0.0,
+      "on_time_rate": 1.0,
+      "avg_tlc": 5215.15
+    },
+    "local_raw_0": {
+      "cost_buffer_pct": 0.1,
+      "time_buffer_days": 3,
+      "variance": 0.5,
+      "orders": 0,
+      "selections": 1,
+      "defect_rate": 0.0,
+      "on_time_rate": 1.0,
+      "avg_tlc": 19107.23
+    },
+    "JP_raw_0": {
+      "cost_buffer_pct": 0.1,
+      "time_buffer_days": 3,
+      "variance": 0.5,
+      "orders": 0,
+      "selections": 1,
+      "defect_rate": 0.0,
+      "on_time_rate": 1.0,
+      "avg_tlc": 605.3761
+    },
+    "IN_mfg_0": {
+      "cost_buffer_pct": 0.1,
+      "time_buffer_days": 3,
+      "variance": 0.5,
+      "orders": 0,
+      "selections": 1,
+      "defect_rate": 0.0,
+      "on_time_rate": 1.0,
+      "avg_tlc": 12400.24
+    },
+    "CN_dist_0": {
+      "cost_buffer_pct": 0.1,
+      "time_buffer_days": 3,
+      "variance": 0.5,
+      "orders": 0,
+      "selections": 1,
+      "defect_rate": 0.0,
+      "on_time_rate": 1.0,
+      "avg_tlc": 1110.057
+    },
+    "EU_dist_1": {
+      "cost_buffer_pct": 0.1,
+      "time_buffer_days": 3,
+      "variance": 0.5,
+      "orders": 0,
+      "selections": 1,
+      "defect_rate": 0.0,
+      "on_time_rate": 1.0,
+      "avg_tlc": 17680.988
+    },
+    "TH_raw_0": {
+      "cost_buffer_pct": 0.1,
+      "time_buffer_days": 3,
+      "variance": 0.5,
+      "orders": 0,
+      "selections": 1,
+      "defect_rate": 0.0,
+      "on_time_rate": 1.0,
+      "avg_tlc": 374.7621
+    },
+    "CN_dist_1": {
+      "cost_buffer_pct": 0.1,
+      "time_buffer_days": 3,
+      "variance": 0.5,
+      "orders": 0,
+      "selections": 1,
+      "defect_rate": 0.0,
+      "on_time_rate": 1.0,
+      "avg_tlc": 4331.564
+    },
+    "MX_mfg_0": {
+      "cost_buffer_pct": 0.1,
+      "time_buffer_days": 3,
+      "variance": 0.5,
+      "orders": 0,
+      "selections": 1,
+      "defect_rate": 0.0,
+      "on_time_rate": 1.0,
+      "avg_tlc": 1140.76
+    },
+    "JP_dist_1": {
+      "cost_buffer_pct": 0.1,
+      "time_buffer_days": 3,
+      "variance": 0.5,
+      "orders": 0,
+      "selections": 1,
+      "defect_rate": 0.0,
+      "on_time_rate": 1.0,
+      "avg_tlc": 2237.8233
+    },
+    "TW_raw_0": {
+      "cost_buffer_pct": 0.1,
+      "time_buffer_days": 3,
+      "variance": 0.5,
+      "orders": 0,
+      "selections": 1,
+      "defect_rate": 0.0,
+      "on_time_rate": 1.0,
+      "avg_tlc": 2325.2076
+    }
+  }
+}

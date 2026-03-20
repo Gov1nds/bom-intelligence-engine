@@ -1,0 +1,7 @@
+{
+  "iterations": 15,
+  "exploration_rate": 0.15,
+  "confidence": 0.5,
+  "total_regret": 0.0,
+  "region_regret": {}
+}
