@@ -519,6 +519,9 @@ def normalize_row(
     # UOM
     uom = (uom_map or {}).get("quantity", None)
 
+    # group_key: future-ready field for aggregation stages (not used now)
+    group_key = normalized_desc or part_number or ""
+
     return {
         "part_number": part_number,
         "description": description,
@@ -530,24 +533,22 @@ def normalize_row(
         "category": category,
         "source_sheet": sheet_name,
         "row_index": row_index,
+        "group_key": group_key,
     }
-
 
 # =========================================================
 # DEDUPLICATION
 # =========================================================
 
 def deduplicate(rows: List[Dict]) -> List[Dict]:
-    """Remove duplicate rows based on part_number + description + quantity."""
-    seen = set()
-    unique = []
-    for r in rows:
-        key = (r.get("part_number", ""), r.get("description", ""), r.get("quantity", 0))
-        if key not in seen:
-            seen.add(key)
-            unique.append(r)
-    return unique
-
+    """
+    Non-destructive pass-through.
+    Multi-sheet BOMs contain valid duplicates across assemblies/modules.
+    Removing them causes data loss. Aggregation belongs to later stages.
+    """
+    count = len(rows)
+    logger.info(f"Dedup check: {count} rows in → {count} rows out (no removal — multi-sheet safe)")
+    return rows
 
 # =========================================================
 # MAIN UBNE PIPELINE
@@ -629,9 +630,15 @@ def ubne_process_bom(
             if result is not None:
                 all_normalized.append(result)
 
-    # ── Deduplicate ─────────────────────────────────────
+# ── Deduplicate (non-destructive) ───────────────────
+    pre_count = len(all_normalized)
     all_normalized = deduplicate(all_normalized)
-    diagnostics["total_output_rows"] = len(all_normalized)
+    post_count = len(all_normalized)
+    diagnostics["total_output_rows"] = post_count
+    diagnostics["dedup_before"] = pre_count
+    diagnostics["dedup_after"] = post_count
+    if pre_count != post_count:
+        logger.warning(f"Dedup removed {pre_count - post_count} rows — investigate if unexpected")
 
     # ── Convert to NormalizedBOMItem ────────────────────
     items: List[NormalizedBOMItem] = []
