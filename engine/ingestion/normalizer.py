@@ -144,3 +144,37 @@ def process_bom(file_path: str, user_location: str = "", target_currency: str = 
             raw_row={str(k): str(v) for k, v in row.items()},
         ))
     return items
+# =========================================================
+# UBNE INTEGRATION (append — do not modify above)
+# =========================================================
+
+def process_bom_v2(
+    file_path: str,
+    user_location: str = "",
+    target_currency: str = "USD",
+    email: str = "",
+):
+    """
+    Enhanced BOM processing with UBNE.
+    Falls back to original process_bom on failure.
+    Returns: (items, diagnostics_or_none)
+    """
+    from engine.ingestion.ubne import USE_NEW_NORMALIZER, ubne_process_bom
+    import logging
+    _logger = logging.getLogger("ubne")
+
+    if USE_NEW_NORMALIZER:
+        try:
+            _logger.info("UBNE pipeline active — processing with new normalizer")
+            items, diagnostics = ubne_process_bom(file_path, user_location, target_currency, email)
+            if items:
+                _logger.info(f"UBNE success: {len(items)} items")
+                return items, diagnostics
+            else:
+                _logger.warning("UBNE returned empty — falling back to legacy parser")
+        except Exception as e:
+            _logger.error(f"UBNE failed: {e} — falling back to legacy parser")
+
+    # Fallback to original
+    items = process_bom(file_path, user_location, target_currency, email)
+    return items, None

@@ -26,7 +26,8 @@ class BOMIntelligenceEngine:
         t0 = time.time(); pt = {}
         # Phase 1
         ts = time.time()
-        items = process_bom(file_path, user_location, target_currency, email)
+        from engine.ingestion.normalizer import process_bom_v2
+        items, ubne_diagnostics = process_bom_v2(file_path, user_location, target_currency, email)
         pt["p1_ingestion"] = round(time.time()-ts, 3)
         # Phase 2
         ts = time.time()
@@ -51,6 +52,8 @@ class BOMIntelligenceEngine:
         total_cands = sum(len(v) for v in all_cands.values())
         report["_meta"] = {"total_time_s":round(time.time()-t0,3),"phase_times":pt,
                            "items":len(items),"candidates":total_cands,"version":"2.0.0"}
+        if ubne_diagnostics:
+            report["_ubne_diagnostics"] = ubne_diagnostics
         return report
 
     def submit_feedback(self, tracking_id, actual_cost=None, actual_days=None, quality_ok=True, on_time=True):
