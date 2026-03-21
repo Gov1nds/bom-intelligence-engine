@@ -1,14 +1,5 @@
 """
-Universal BOM Normalization Engine (UBNE) v1.2
-
-Fixes applied over v1.1:
-- ZERO data loss: fallback row recovery instead of dropping
-- ALL sheets processed: no sheet skipping on mapping failure
-- Expanded column synonyms for electrical/mechanical/vendor BOMs
-- Content-based fallback detection (text density, numeric dominance)
-- Full logging of every sheet, mapping decision, and fallback
-- Non-destructive dedup (pass-through)
-- group_key metadata for future aggregation
+Universal BOM Normalization Engine (UBNE) v1.4
 """
 
 import re
@@ -21,14 +12,8 @@ from core.schemas import NormalizedBOMItem
 
 logger = logging.getLogger("ubne")
 
-# =========================================================
-# FEATURE FLAG
-# =========================================================
 USE_NEW_NORMALIZER = True
 
-# =========================================================
-# COLUMN MAPPING DICTIONARY (expanded for all BOM domains)
-# =========================================================
 COLUMN_MAP: Dict[str, List[str]] = {
     "part_number": [
         "part number", "part no", "part no.", "part#", "part num", "pn", "p/n",
@@ -43,7 +28,7 @@ COLUMN_MAP: Dict[str, List[str]] = {
         "qty", "qty.", "quantity", "qnty", "required qty", "order qty",
         "ordered quantity", "qty required", "qty needed", "units", "unit qty",
         "no of units", "count", "pcs", "pieces", "nos", "number", "amount",
-        "req qty", "order quantity", "q", "no", "numbers",
+        "req qty", "order quantity", "q", "numbers",
     ],
     "description": [
         "desc", "description", "component", "component description",
@@ -67,12 +52,20 @@ COLUMN_MAP: Dict[str, List[str]] = {
     ],
 }
 
-REQUIRED_FIELDS = {"part_number", "quantity"}
-CRITICAL_FIELDS = {"part_number", "description"}
+_DESC_PRIORITY = [
+    "item name", "part name", "component name", "product name",
+    "name", "item description", "description", "component",
+    "component description", "part description",
+]
 
-# =========================================================
-# HEADER NORMALIZATION + UOM EXTRACTION
-# =========================================================
+_DESC_BLOCKLIST = {
+    "sl no", "sl no.", "s no", "s no.", "sr no", "sr no.", "serial",
+    "serial number", "sno", "no", "row",
+    "category", "type", "component type", "class", "group",
+    "item group", "product category", "classification", "family", "segment",
+}
+
+REQUIRED_FIELDS = {"part_number", "quantity"}
 
 _CLEAN_RE = re.compile(r"[^a-z0-9\s]")
 _SPACE_RE = re.compile(r"\s+")
@@ -102,28 +95,81 @@ def _similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
-# =========================================================
-# COLUMN DETECTION ENGINE (with content-based fallback)
-# =========================================================
+def _is_sequential(rows: List[Dict], col: str, n: int = 20) -> bool:
+    vals: List[float] = []
+    for r in rows[:n]:
+        v = str(r.get(col, "")).strip()
+        if v:
+            try:
+                vals.append(float(v))
+            except ValueError:
+                return False
+    if len(vals) < 3:
+        return False
+    return all(abs((vals[i + 1] - vals[i]) - 1) < 0.01 for i in range(len(vals) - 1))
+
+
+def _is_mostly_numeric(rows: List[Dict], col: str, n: int = 20) -> bool:
+    num = tot = 0
+    for r in rows[:n]:
+        v = str(r.get(col, "")).strip()
+        if v:
+            tot += 1
+            try:
+                float(v)
+                num += 1
+            except ValueError:
+                pass
+    return tot > 0 and num / tot > 0.8
+
+
+def _avg_text_len(rows: List[Dict], col: str, n: int = 20) -> float:
+    tl = c = 0
+    for r in rows[:n]:
+        v = str(r.get(col, "")).strip()
+        if v:
+            tl += len(v)
+            c += 1
+    return tl / max(c, 1)
+
 
 class ColumnMapper:
-    FUZZY_THRESHOLD = 0.75
+    FUZZY_THRESHOLD = 0.72
 
-    def __init__(self, raw_headers: List[str], sample_rows: List[Dict] = None):
+    def __init__(
+        self,
+        raw_headers: List[str],
+        sample_rows: Optional[List[Dict]] = None,
+        hints: Optional[Dict[str, str]] = None,
+    ):
         self.raw_headers = raw_headers
         self.normalized = [_normalize_header(h) for h in raw_headers]
         self.sample_rows = sample_rows or []
+        self.hints = hints or {}
         self.mapping: Dict[str, Optional[str]] = {}
         self.confidence: Dict[str, float] = {}
         self.uom_map: Dict[str, Optional[str]] = {}
         self.warnings: List[str] = []
-        self._unmapped: List[str] = []
+        self.rejected: Dict[str, List[str]] = {}
 
     def detect(self) -> Dict[str, Optional[str]]:
-        used = set()
+        used: set = set()
 
-        # Pass 1: Exact match
+        # Pass 0: Cross-sheet hints
+        for field, hint in self.hints.items():
+            for idx, raw in enumerate(self.raw_headers):
+                if idx in used:
+                    continue
+                if _normalize_header(raw) == _normalize_header(hint):
+                    self.mapping[field] = raw
+                    self.confidence[field] = 0.85
+                    used.add(idx)
+                    break
+
+        # Pass 1: Exact
         for field, syns in COLUMN_MAP.items():
+            if field in self.mapping:
+                continue
             for idx, norm in enumerate(self.normalized):
                 if idx in used:
                     continue
@@ -133,152 +179,262 @@ class ColumnMapper:
                     used.add(idx)
                     break
 
-        # Pass 2: Partial / substring match
+        # Pass 1.5: Description priority
+        if "description" not in self.mapping:
+            for idx, norm in enumerate(self.normalized):
+                if idx in used or norm in _DESC_BLOCKLIST:
+                    continue
+                for psyn in _DESC_PRIORITY:
+                    if norm == psyn or psyn in norm or norm in psyn:
+                        self.mapping["description"] = self.raw_headers[idx]
+                        self.confidence["description"] = 0.95
+                        used.add(idx)
+                        break
+                if "description" in self.mapping:
+                    break
+
+        # Pass 2: Partial
         for field, syns in COLUMN_MAP.items():
             if field in self.mapping:
                 continue
-            best_idx, best_score = None, 0
+            best_idx: Optional[int] = None
+            best_sc: float = 0.0
             for idx, norm in enumerate(self.normalized):
                 if idx in used:
+                    continue
+                if field == "description" and norm in _DESC_BLOCKLIST:
                     continue
                 for syn in syns:
                     if syn in norm or norm in syn:
-                        score = 0.9
-                        if score > best_score:
-                            best_score = score
+                        if 0.9 > best_sc:
+                            best_sc = 0.9
                             best_idx = idx
-            if best_idx is not None:
+            if best_idx is not None and best_sc > 0:
                 self.mapping[field] = self.raw_headers[best_idx]
-                self.confidence[field] = best_score
+                self.confidence[field] = best_sc
                 used.add(best_idx)
 
-        # Pass 3: Fuzzy match
+        # Pass 3: Fuzzy
         for field, syns in COLUMN_MAP.items():
             if field in self.mapping:
                 continue
-            best_idx, best_score = None, 0
+            best_idx2: Optional[int] = None
+            best_sc2: float = 0.0
             for idx, norm in enumerate(self.normalized):
                 if idx in used:
                     continue
+                if field == "description" and norm in _DESC_BLOCKLIST:
+                    continue
                 for syn in syns:
-                    score = _similarity(norm, syn)
-                    if score > best_score and score >= self.FUZZY_THRESHOLD:
-                        best_score = score
-                        best_idx = idx
-            if best_idx is not None:
-                self.mapping[field] = self.raw_headers[best_idx]
-                self.confidence[field] = round(best_score, 3)
-                used.add(best_idx)
+                    sc = _similarity(norm, syn)
+                    if sc > best_sc2 and sc >= self.FUZZY_THRESHOLD:
+                        best_sc2 = sc
+                        best_idx2 = idx
+            if best_idx2 is not None:
+                self.mapping[field] = self.raw_headers[best_idx2]
+                self.confidence[field] = round(best_sc2, 3)
+                used.add(best_idx2)
 
-        # Pass 4: Content-based fallback for missing critical fields
-        unmapped_indices = [i for i in range(len(self.raw_headers)) if i not in used]
-        self._unmapped = [self.raw_headers[i] for i in unmapped_indices]
+        # Pass 4: Content-based fallbacks
+        unmapped = [i for i in range(len(self.raw_headers)) if i not in used]
 
-        if "description" not in self.mapping and unmapped_indices and self.sample_rows:
-            best_idx, best_len = None, 0
-            for idx in unmapped_indices:
+        # 4a: Description
+        if "description" not in self.mapping and self.sample_rows:
+            bi: Optional[int] = None
+            bl: float = 0.0
+            for idx in unmapped:
                 col = self.raw_headers[idx]
-                avg_len = 0
-                count = 0
-                for row in self.sample_rows[:20]:
-                    val = str(row.get(col, "")).strip()
-                    if val:
-                        avg_len += len(val)
-                        count += 1
-                if count > 0:
-                    avg_len /= count
-                if avg_len > best_len:
-                    best_len = avg_len
-                    best_idx = idx
-            if best_idx is not None and best_len > 5:
-                self.mapping["description"] = self.raw_headers[best_idx]
+                if self.normalized[idx] in _DESC_BLOCKLIST:
+                    self.rejected.setdefault("description", []).append(col)
+                    continue
+                if _is_sequential(self.sample_rows, col) or _is_mostly_numeric(self.sample_rows, col):
+                    self.rejected.setdefault("description", []).append(col)
+                    continue
+                vals = [str(r.get(col, "")).strip() for r in self.sample_rows[:20] if str(r.get(col, "")).strip()]
+                if len(vals) >= 3:
+                    uniqueness = len(set(vals)) / len(vals)
+                    if uniqueness < 0.15:
+                        self.rejected.setdefault("description", []).append(f"{col}(low-uniq)")
+                        continue
+                al = _avg_text_len(self.sample_rows, col)
+                if al > bl:
+                    bl = al
+                    bi = idx
+            if bi is not None and bl > 3:
+                self.mapping["description"] = self.raw_headers[bi]
                 self.confidence["description"] = 0.4
-                used.add(best_idx)
-                self.warnings.append(f"description fallback: '{self.raw_headers[best_idx]}' (avg text len={best_len:.0f})")
+                used.add(bi)
+                unmapped = [i for i in unmapped if i != bi]
+                self.warnings.append(f"description fallback: '{self.raw_headers[bi]}'")
 
-        if "quantity" not in self.mapping and unmapped_indices and self.sample_rows:
-            unmapped_indices = [i for i in range(len(self.raw_headers)) if i not in used]
-            best_idx, best_ratio = None, 0
-            for idx in unmapped_indices:
+        # 4b: Quantity
+        if "quantity" not in self.mapping and self.sample_rows:
+            unmapped = [i for i in range(len(self.raw_headers)) if i not in used]
+            q_bi: Optional[int] = None
+            q_br: float = 0.0
+            for idx in unmapped:
                 col = self.raw_headers[idx]
-                numeric_count = 0
-                total = 0
-                for row in self.sample_rows[:20]:
-                    val = str(row.get(col, "")).strip()
-                    if val:
-                        total += 1
+                if _is_sequential(self.sample_rows, col):
+                    self.rejected.setdefault("quantity", []).append(col)
+                    continue
+                nc = tot = 0
+                for r in self.sample_rows[:20]:
+                    v = str(r.get(col, "")).strip()
+                    if v:
+                        tot += 1
                         try:
-                            float(re.sub(r"[^\d.]", "", val))
-                            numeric_count += 1
+                            float(re.sub(r"[^\d.]", "", v))
+                            nc += 1
                         except ValueError:
                             pass
-                ratio = numeric_count / max(total, 1)
-                if ratio > best_ratio:
-                    best_ratio = ratio
-                    best_idx = idx
-            if best_idx is not None and best_ratio > 0.5:
-                self.mapping["quantity"] = self.raw_headers[best_idx]
+                ratio = nc / max(tot, 1)
+                if ratio > q_br:
+                    q_br = ratio
+                    q_bi = idx
+            if q_bi is not None and q_br > 0.5:
+                self.mapping["quantity"] = self.raw_headers[q_bi]
                 self.confidence["quantity"] = 0.4
-                used.add(best_idx)
-                self.warnings.append(f"quantity fallback: '{self.raw_headers[best_idx]}' (numeric ratio={best_ratio:.2f})")
+                used.add(q_bi)
+                self.warnings.append(f"quantity fallback: '{self.raw_headers[q_bi]}'")
 
+        # 4c: Part number
         if "part_number" not in self.mapping:
-            unmapped_indices = [i for i in range(len(self.raw_headers)) if i not in used]
-            if unmapped_indices:
-                self.mapping["part_number"] = self.raw_headers[unmapped_indices[0]]
+            unmapped = [i for i in range(len(self.raw_headers)) if i not in used]
+            for idx in unmapped:
+                col = self.raw_headers[idx]
+                if _is_sequential(self.sample_rows, col):
+                    self.rejected.setdefault("part_number", []).append(col)
+                    continue
+                self.mapping["part_number"] = col
                 self.confidence["part_number"] = 0.3
-                used.add(unmapped_indices[0])
-                self.warnings.append(f"part_number positional fallback: '{self.raw_headers[unmapped_indices[0]]}'")
+                used.add(idx)
+                self.warnings.append(f"part_number fallback: '{col}'")
+                break
 
+        # 4d: Manufacturer
         if "manufacturer" not in self.mapping and self.sample_rows:
-            unmapped_indices = [i for i in range(len(self.raw_headers)) if i not in used]
-            best_idx, best_score = None, 0
-            for idx in unmapped_indices:
+            unmapped = [i for i in range(len(self.raw_headers)) if i not in used]
+            m_bi: Optional[int] = None
+            m_bs: float = 0.0
+            for idx in unmapped:
                 col = self.raw_headers[idx]
                 vals = [str(r.get(col, "")).strip() for r in self.sample_rows[:30] if str(r.get(col, "")).strip()]
                 if len(vals) < 3:
                     continue
-                unique_ratio = len(set(vals)) / len(vals)
-                if 0.05 < unique_ratio < 0.7 and unique_ratio > best_score:
-                    best_score = unique_ratio
-                    best_idx = idx
-            if best_idx is not None:
-                self.mapping["manufacturer"] = self.raw_headers[best_idx]
+                ur = len(set(vals)) / len(vals)
+                if 0.05 < ur < 0.7 and ur > m_bs:
+                    m_bs = ur
+                    m_bi = idx
+            if m_bi is not None:
+                self.mapping["manufacturer"] = self.raw_headers[m_bi]
                 self.confidence["manufacturer"] = 0.35
-                used.add(best_idx)
-                self.warnings.append(f"manufacturer fallback: '{self.raw_headers[best_idx]}' (categorical)")
+                used.add(m_bi)
+
+        # Pass 5: Validation
+        pn_col = self.mapping.get("part_number")
+        if pn_col and self.sample_rows and _is_sequential(self.sample_rows, pn_col):
+            logger.warning(f"Validation: part_number '{pn_col}' is serial — removing")
+            self.rejected.setdefault("part_number", []).append(pn_col)
+            del self.mapping["part_number"]
+            self.confidence.pop("part_number", None)
+
+        dc_col = self.mapping.get("description")
+        if dc_col and _normalize_header(dc_col) in _DESC_BLOCKLIST:
+            logger.warning(f"Validation: description '{dc_col}' blocklisted — removing")
+            self.rejected.setdefault("description", []).append(dc_col)
+            del self.mapping["description"]
+            self.confidence.pop("description", None)
 
         for f in REQUIRED_FIELDS:
             if f not in self.mapping:
-                self.warnings.append(f"Required field '{f}' not detected")
+                self.warnings.append(f"Required '{f}' not detected")
 
-        # Extract UOMs
         for field, raw_col in self.mapping.items():
             if raw_col:
                 uom = _extract_uom(raw_col)
                 if uom:
                     self.uom_map[field] = uom
 
-        logger.info(f"Column mapping: {self.mapping}")
+        logger.info(f"Mapping: {self.mapping}")
         logger.info(f"Confidence: {self.confidence}")
-        if self.uom_map:
-            logger.info(f"Extracted UOMs: {self.uom_map}")
+        if self.rejected:
+            logger.info(f"Rejected: {self.rejected}")
         for w in self.warnings:
             logger.warning(w)
 
         return self.mapping
 
 
-# =========================================================
-# DATA CLEANING
-# =========================================================
+# ── Quantity parsing (unchanged from v1.3) ──
 
 _QTY_RE = re.compile(r"([\d]+(?:\.[\d]+)?)")
 _QTY_MULT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*[xX×*]\s*(\d+(?:\.\d+)?)")
 _QTY_REELS_RE = re.compile(
-    r"(\d+(?:\.\d+)?)\s*(?:reels?|rolls?|packs?|bags?|boxes?)\s*(?:of|@)\s*(\d+(?:\.\d+)?)", re.I
+    r"(\d+(?:\.\d+)?)\s*(?:reels?|rolls?|packs?|bags?|boxes?)\s*(?:of|@)\s*(\d+(?:\.\d+)?)", re.I,
 )
 _QTY_PLUSMINUS_RE = re.compile(r"(\d+(?:\.\d+)?)\s*[+±]\s*/?\s*-?\s*\d+")
+_ALPHA_NUMERIC_RE = re.compile(r"[a-zA-Z].*\d|\d.*[a-zA-Z]")
+_QTY_SANITY_MAX = 10000
+
+
+def _qty_safe(v: float, orig: str = "") -> float:
+    if v <= 0:
+        return 1.0
+    if v > _QTY_SANITY_MAX:
+        logger.warning(f"Qty {v} from '{orig}' capped")
+        return 1.0
+    return v
+
+
+def parse_quantity(raw: Any) -> float:
+    if raw is None:
+        return 1.0
+    s = str(raw).strip()
+    if not s:
+        return 1.0
+    if _ALPHA_NUMERIC_RE.search(s):
+        return 1.0
+    for pat, grp in [
+        (_QTY_MULT_RE, lambda m: float(m.group(1)) * float(m.group(2))),
+        (_QTY_REELS_RE, lambda m: float(m.group(1)) * float(m.group(2))),
+        (_QTY_PLUSMINUS_RE, lambda m: float(m.group(1))),
+    ]:
+        m = pat.search(s)
+        if m:
+            try:
+                return _qty_safe(grp(m), s)
+            except (ValueError, TypeError):
+                pass
+    m = _QTY_RE.search(s)
+    if m:
+        try:
+            return _qty_safe(float(m.group(1)), s)
+        except (ValueError, TypeError):
+            pass
+    return 1.0
+
+
+# ── Text cleaning ──
+
+def clean_part_number(raw: Any) -> Optional[str]:
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    return s if s else None
+
+
+def clean_manufacturer(raw: Any) -> Optional[str]:
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    return s if s else None
+
+
+def clean_text(text: Any) -> str:
+    if not text or not str(text).strip():
+        return ""
+    return re.sub(r"\s+", " ", str(text).strip())
+
 
 _ABBREVS = [
     (re.compile(r"\bres\b", re.I), "resistor"),
@@ -290,19 +446,11 @@ _ABBREVS = [
     (re.compile(r"\bal\b(?=\s)", re.I), "aluminum"),
     (re.compile(r"\bpcb\b", re.I), "PCB"),
 ]
-
 _VALUE_SCALES = [
     (re.compile(r"(\d+(?:\.\d+)?)\s*k\b", re.I), lambda m: str(int(float(m.group(1)) * 1000))),
     (re.compile(r"(\d+(?:\.\d+)?)\s*M\b"), lambda m: str(int(float(m.group(1)) * 1e6))),
 ]
-
 _BOLT_RE = re.compile(r"\bm(\d+)\s*x\s*(\d+)", re.I)
-
-
-def clean_text(text: str) -> str:
-    if not text or not str(text).strip():
-        return ""
-    return re.sub(r"\s+", " ", str(text).strip())
 
 
 def normalize_description(text: str) -> str:
@@ -310,199 +458,124 @@ def normalize_description(text: str) -> str:
         return ""
     s = text.strip().lower()
     s = _BOLT_RE.sub(r"metric_bolt_M\1x\2", s)
-    for pat, repl in _ABBREVS:
-        s = pat.sub(repl, s, count=1)
-    for pat, fn in _VALUE_SCALES:
-        s = pat.sub(fn, s)
+    for p, r in _ABBREVS:
+        s = p.sub(r, s, count=1)
+    for p, fn in _VALUE_SCALES:
+        s = p.sub(fn, s)
     s = re.sub(r"\b(\w+)\s+\1\b", r"\1", s)
     return re.sub(r"\s+", " ", s).strip()
 
 
-def parse_quantity(raw) -> float:
-    if raw is None:
-        return 1.0
-    s = str(raw).strip()
-    if not s:
-        return 1.0
-    m = _QTY_MULT_RE.search(s)
-    if m:
-        try:
-            result = float(m.group(1)) * float(m.group(2))
-            logger.debug(f"Qty '{s}' → multiplication → {result}")
-            return max(1.0, result)
-        except (ValueError, TypeError):
-            pass
-    m = _QTY_REELS_RE.search(s)
-    if m:
-        try:
-            result = float(m.group(1)) * float(m.group(2))
-            logger.debug(f"Qty '{s}' → container × count → {result}")
-            return max(1.0, result)
-        except (ValueError, TypeError):
-            pass
-    m = _QTY_PLUSMINUS_RE.search(s)
-    if m:
-        try:
-            return max(1.0, float(m.group(1)))
-        except (ValueError, TypeError):
-            pass
-    m = _QTY_RE.search(s)
-    if m:
-        try:
-            return max(1.0, float(m.group(1)))
-        except (ValueError, TypeError):
-            return 1.0
-    return 1.0
+# ── Forward fill (hierarchical only, unchanged from v1.3) ──
 
+_FF_ALLOWED = {"category", "assembly", "section", "group", "sub assembly", "module"}
 
-def clean_part_number(raw) -> Optional[str]:
-    if raw is None:
-        return None
-    s = str(raw).strip()
-    return s if s else None
-
-
-def clean_manufacturer(raw) -> Optional[str]:
-    if raw is None:
-        return None
-    s = str(raw).strip()
-    return s if s else None
-
-# =========================================================
-# FORWARD FILL (CONTEXT PROPAGATION)
-# =========================================================
 
 def forward_fill_rows(rows: List[Dict], sheet_name: str = "") -> List[Dict]:
-    """
-    Propagate values downward through empty cells.
-    Excel BOMs often define Category/Assembly once and leave subsequent rows blank.
-    This reconstructs that visual hierarchy into explicit data.
-    """
     if not rows:
         return rows
-
-    filled = []
-    last_values: Dict[str, Any] = {}
-
+    filled: List[Dict] = []
+    last: Dict[str, Any] = {}
     for row in rows:
-        new_row = {}
-        for key, value in row.items():
-            if value is not None and str(value).strip():
-                last_values[key] = value
-                new_row[key] = value
+        nr: Dict[str, Any] = {}
+        for k, v in row.items():
+            nk = str(k).strip().lower().replace("_", " ").replace("-", " ")
+            hier = any(a in nk for a in _FF_ALLOWED)
+            if v is not None and str(v).strip():
+                if hier:
+                    last[k] = v
+                nr[k] = v
             else:
-                new_row[key] = last_values.get(key, "")
-        filled.append(new_row)
-
-    logger.info(f"Forward fill applied on sheet: '{sheet_name}' ({len(filled)} rows)")
+                nr[k] = last.get(k, "") if hier else ""
+        filled.append(nr)
+    logger.info(f"Forward fill '{sheet_name}': {len(filled)} rows (hierarchical only)")
     return filled
-# =========================================================
-# MULTI-SHEET EXCEL PARSER WITH HEADER DETECTION
-# =========================================================
-
-_HEADER_SCAN_ROWS = 15
 
 
-def _score_row_as_header(row_values: List[str]) -> int:
-    score = 0
-    for val in row_values:
-        norm = _normalize_header(str(val))
-        if not norm:
+# ── Header detection (Issue 1 fix) ──
+
+_HEADER_SCAN = 15
+_HEADER_MIN = 3
+
+
+def _score_header(vals: List[str]) -> int:
+    sc = 0
+    for v in vals:
+        n = _normalize_header(str(v))
+        if not n:
             continue
-        for synonyms in COLUMN_MAP.values():
-            if norm in synonyms:
-                score += 2
+        for syns in COLUMN_MAP.values():
+            if n in syns:
+                sc += 2
                 break
-            elif any(syn in norm or norm in syn for syn in synonyms):
-                score += 1
+            elif any(s in n or n in s for s in syns):
+                sc += 1
                 break
-    return score
+    return sc
 
 
-def _detect_header_row(df_raw, sheet_name: str) -> int:
-    import pandas as pd
-    max_rows = min(_HEADER_SCAN_ROWS, len(df_raw))
+def _detect_header_row(df_raw: Any, sheet_name: str) -> int:
+    nr = len(df_raw)
+    if nr < 1:
+        return 0
     best_row = 0
-    best_score = _score_row_as_header([str(c) for c in df_raw.columns])
-    for i in range(max_rows):
-        row_vals = [str(v) for v in df_raw.iloc[i].values]
-        score = _score_row_as_header(row_vals)
-        if score > best_score:
-            best_score = score
-            best_row = i + 1
-    if best_row > 0:
-        logger.info(f"Sheet '{sheet_name}': header at row {best_row} (score={best_score})")
-    else:
-        logger.info(f"Sheet '{sheet_name}': header at default row 0 (score={best_score})")
+    best_sc = _score_header([str(v) for v in df_raw.iloc[0].values])
+    for i in range(1, min(_HEADER_SCAN, nr)):
+        sc = _score_header([str(v) for v in df_raw.iloc[i].values])
+        if sc > best_sc + 1:
+            best_sc = sc
+            best_row = i
+    if best_row > 0 and best_sc < _HEADER_MIN:
+        best_row = 0
+    logger.info(f"Sheet '{sheet_name}': header@row {best_row} (score={best_sc})")
     return best_row
 
 
+# ── Excel / CSV parsers ──
+
 def parse_excel_all_sheets(file_path: str) -> List[Tuple[str, List[str], List[Dict]]]:
     import pandas as pd
-    sheets_data = []
+    out: List[Tuple[str, List[str], List[Dict]]] = []
     try:
         xls = pd.ExcelFile(file_path, engine="openpyxl")
     except Exception as e:
-        logger.error(f"Failed to open Excel: {e}")
+        logger.error(f"Open failed: {e}")
         raise
-
-    for sheet_name in xls.sheet_names:
-        logger.info(f"Processing sheet: '{sheet_name}'")
+    for sn in xls.sheet_names:
+        logger.info(f"Sheet: '{sn}'")
         try:
-            df_raw = pd.read_excel(xls, sheet_name=sheet_name, header=None, engine="openpyxl").fillna("")
-
-            if df_raw.empty or len(df_raw) < 1:
-                logger.warning(f"Sheet '{sheet_name}': empty — processing anyway with 0 rows")
+            df_raw = pd.read_excel(xls, sheet_name=sn, header=None, engine="openpyxl").fillna("")
+            if df_raw.empty:
                 continue
-
-            logger.info(f"Sheet '{sheet_name}': raw shape = {df_raw.shape}")
-
-            # Detect header — but NEVER skip sheet on failure
-            try:
-                header_row_idx = _detect_header_row(df_raw, sheet_name)
-            except Exception as e:
-                logger.warning(f"Sheet '{sheet_name}': header detection failed ({e}), using row 0")
-                header_row_idx = 0
-
-            df = pd.read_excel(
-                xls, sheet_name=sheet_name, header=header_row_idx, engine="openpyxl"
-            ).fillna("")
-
-            headers = [str(c).strip() for c in df.columns]
-            rows = df.to_dict("records")
-            rows = [r for r in rows if any(str(v).strip() for v in r.values())]
-
-            logger.info(f"Sheet '{sheet_name}': {len(rows)} data rows, {len(headers)} columns (header@{header_row_idx})")
-
-            # ALWAYS append — even if 0 rows (logged above)
+            hr = _detect_header_row(df_raw, sn)
+            df = pd.read_excel(xls, sheet_name=sn, header=hr, engine="openpyxl").fillna("")
+            if df.empty:
+                continue
+            heads = [str(c).strip() for c in df.columns]
+            rows = [r for r in df.to_dict("records") if any(str(v).strip() for v in r.values())]
             if rows:
-                sheets_data.append((sheet_name, headers, rows))
-
+                out.append((sn, heads, rows))
+                logger.info(f"Sheet '{sn}': {len(rows)} rows, header@{hr}")
         except Exception as e:
-            logger.error(f"Sheet '{sheet_name}': read error — {e} — CONTINUING to next sheet")
-            continue
-
-    logger.info(f"Total sheets processed: {len(sheets_data)}")
-    return sheets_data
+            logger.error(f"Sheet '{sn}' error: {e}")
+    return out
 
 
-def parse_csv_sheet(file_path: str) -> List[Tuple[str, List[str], List[Dict]]]:
-    with open(file_path, "r", encoding="utf-8-sig") as f:
+def parse_csv_sheet(fp: str) -> List[Tuple[str, List[str], List[Dict]]]:
+    with open(fp, "r", encoding="utf-8-sig") as f:
         sample = f.read(4096)
         f.seek(0)
         try:
-            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+            dia = csv.Sniffer().sniff(sample, delimiters=",;\t|")
         except csv.Error:
-            dialect = csv.excel
-        reader = csv.DictReader(f, dialect=dialect)
-        headers = reader.fieldnames or []
-        rows = [r for r in reader if any(str(v).strip() for v in r.values())]
-    return [("Sheet1", headers, rows)] if rows else []
+            dia = csv.excel
+        rdr = csv.DictReader(f, dialect=dia)
+        heads = rdr.fieldnames or []
+        rows = [r for r in rdr if any(str(v).strip() for v in r.values())]
+    return [("Sheet1", heads, rows)] if rows else []
 
 
-# =========================================================
-# ROW NORMALIZATION (ZERO DATA LOSS)
-# =========================================================
+# ── Row normalization (Issues 2, 7, 9) ──
 
 def normalize_row(
     row: Dict[str, Any],
@@ -512,118 +585,90 @@ def normalize_row(
     warnings: List[str],
     uom_map: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
-    """
-    Normalize a single row. NEVER returns None — always produces a valid record.
-    """
 
-    def _get(field: str):
-        col = col_map.get(field)
-        if col and col in row:
-            return row[col]
-        return None
+    def _get(f: str) -> Any:
+        c = col_map.get(f)
+        return row[c] if c and c in row else None
 
-    raw_pn = _get("part_number")
-    raw_desc = _get("description")
-    raw_qty = _get("quantity")
-    raw_mfr = _get("manufacturer")
-    raw_mat = _get("material")
-    raw_cat = _get("category")
+    pn = clean_part_number(_get("part_number"))
+    raw_desc = clean_text(_get("description"))
+    qty = parse_quantity(_get("quantity"))
+    mfr = clean_manufacturer(_get("manufacturer"))
+    mat = clean_text(_get("material"))
+    cat = clean_text(_get("category")) or None
+    uom = (uom_map or {}).get("quantity")
 
-    part_number = clean_part_number(raw_pn)
-    description = clean_text(raw_desc)
-    quantity = parse_quantity(raw_qty)
-    manufacturer = clean_manufacturer(raw_mfr)
-    material = clean_text(raw_mat)
-    category = clean_text(raw_cat) or None
-    uom = (uom_map or {}).get("quantity", None)
-
-    # ── ZERO DATA LOSS: fallback if both critical fields empty ──
-    if not part_number and not description:
-        raw_values = [str(v).strip() for v in row.values() if v is not None and str(v).strip()]
-
-        if raw_values:
-            fallback_text = " | ".join(raw_values)
+    if not pn and not raw_desc:
+        best = ""
+        for k, v in row.items():
+            vs = str(v).strip()
+            nk = _normalize_header(k)
+            if not vs or nk in _DESC_BLOCKLIST:
+                continue
+            try:
+                float(vs)
+                continue
+            except ValueError:
+                pass
+            if len(vs) > len(best):
+                best = vs
+        if best and len(best) > 2:
+            raw_desc = best
         else:
-            fallback_text = f"UNMAPPED_ROW_{sheet_name}_{row_index}"
+            vals = [str(v).strip() for v in row.values() if v is not None and str(v).strip()]
+            fb = " | ".join(vals) if vals else f"UNMAPPED_{sheet_name}_{row_index}"
+            try:
+                nd = normalize_description(fb)
+            except Exception:
+                nd = fb
+            sq = qty if qty and qty > 0 else 1.0
+            if sq > _QTY_SANITY_MAX:
+                sq = 1.0
+            return {
+                "part_number": str(pn or ""),
+                "raw_description": fb,
+                "description": fb,
+                "normalized_description": nd,
+                "quantity": sq,
+                "uom": str(uom or ""),
+                "manufacturer": str(mfr or ""),
+                "material": str(mat or ""),
+                "category": str(cat or ""),
+                "source_sheet": sheet_name,
+                "row_index": row_index,
+                "group_key": f"{str(pn or '')}_{fb}".strip("_").lower(),
+            }
 
-        try:
-            normalized_desc = normalize_description(fallback_text)
-        except Exception as e:
-            logger.error(f"Normalization failed at {sheet_name}:{row_index} — {e}")
-            normalized_desc = fallback_text
-
-        try:
-            safe_quantity = float(quantity) if quantity else 1.0
-            if safe_quantity <= 0:
-                safe_quantity = 1.0
-        except Exception:
-            safe_quantity = 1.0
-
-        group_key = fallback_text.lower()
-
-        logger.warning(
-            f"Fallback row at {sheet_name}:{row_index} | "
-            f"values={len(raw_values)} | preview={fallback_text[:120]}"
-        )
-
-        return {
-            "part_number": str(part_number or "").strip(),
-            "description": fallback_text,
-            "normalized_description": normalized_desc,
-            "quantity": safe_quantity,
-            "uom": str(uom or "").strip(),
-            "manufacturer": str(manufacturer or "").strip(),
-            "material": str(material or "").strip(),
-            "category": str(category or "").strip(),
-            "source_sheet": sheet_name,
-            "row_index": row_index,
-            "group_key": group_key,
-        }
-
-    # ── Normal path ──
-    normalized_desc = normalize_description(description) if description else ""
-    if not normalized_desc and part_number:
-        normalized_desc = normalize_description(str(part_number))
-
-    # Ensure quantity is safe
-    if not quantity or quantity <= 0:
-        quantity = 1.0
-
-    group_key = normalized_desc or part_number or ""
+    nd = normalize_description(raw_desc) if raw_desc else ""
+    if not nd and pn:
+        nd = normalize_description(str(pn))
+    if not qty or qty <= 0:
+        qty = 1.0
+    if qty > _QTY_SANITY_MAX:
+        qty = 1.0
 
     return {
-        "part_number": part_number,
-        "description": description,
-        "normalized_description": normalized_desc,
-        "quantity": quantity,
+        "part_number": pn,
+        "raw_description": raw_desc,
+        "description": raw_desc or nd,
+        "normalized_description": nd,
+        "quantity": qty,
         "uom": uom,
-        "manufacturer": manufacturer,
-        "material": material,
-        "category": category,
+        "manufacturer": mfr,
+        "material": mat,
+        "category": cat,
         "source_sheet": sheet_name,
         "row_index": row_index,
-        "group_key": group_key,
+        "group_key": f"{pn or ''}_{nd or ''}".strip("_").lower(),
     }
 
 
-# =========================================================
-# DEDUPLICATION (non-destructive)
-# =========================================================
-
 def deduplicate(rows: List[Dict]) -> List[Dict]:
-    """
-    Non-destructive pass-through.
-    Multi-sheet BOMs contain valid duplicates across assemblies.
-    Aggregation belongs to later pipeline stages.
-    """
-    count = len(rows)
-    logger.info(f"Dedup check: {count} rows in → {count} rows out (no removal)")
+    logger.info(f"Dedup: {len(rows)} → {len(rows)} (pass-through)")
     return rows
 
 
-# =========================================================
-# MAIN UBNE PIPELINE
-# =========================================================
+# ── Main pipeline ──
 
 def ubne_process_bom(
     file_path: str,
@@ -633,22 +678,23 @@ def ubne_process_bom(
 ) -> Tuple[List[NormalizedBOMItem], Dict[str, Any]]:
     path = Path(file_path)
     if not path.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
+        raise FileNotFoundError(f"Not found: {file_path}")
 
     ext = path.suffix.lower()
-    diagnostics = {
+    diag: Dict[str, Any] = {
         "file": path.name,
         "sheets_processed": [],
         "total_raw_rows": 0,
         "total_output_rows": 0,
         "column_mappings": {},
         "column_confidence": {},
+        "column_rejected": {},
         "uom_detected": {},
+        "fallback_count": 0,
         "warnings": [],
         "errors": [],
     }
 
-    # Parse
     try:
         if ext == ".csv":
             sheets = parse_csv_sheet(file_path)
@@ -657,75 +703,87 @@ def ubne_process_bom(
         else:
             raise ValueError(f"Unsupported: {ext}")
     except Exception as e:
-        diagnostics["errors"].append(f"Parse failed: {e}")
+        diag["errors"].append(str(e))
         raise
 
     if not sheets:
-        diagnostics["errors"].append("No processable data")
-        raise ValueError("BOM file contains no processable data")
+        raise ValueError("No data")
 
-    all_normalized: List[Dict] = []
+    all_norm: List[Dict] = []
+    hints: Dict[str, str] = {}
 
-    # Process each sheet
-    for sheet_name, headers, rows in sheets:
-        diagnostics["sheets_processed"].append(sheet_name)
-        diagnostics["total_raw_rows"] += len(rows)
+    for sn, heads, rows in sheets:
+        diag["sheets_processed"].append(sn)
+        diag["total_raw_rows"] += len(rows)
+        logger.info(f"Sheet '{sn}': {len(rows)} rows, cols={heads}")
 
-        logger.info(f"Sheet '{sheet_name}': {len(rows)} rows, columns={headers}")
+        mapper = ColumnMapper(heads, sample_rows=rows[:20], hints=hints)
+        cm = mapper.detect()
 
-        # Detect columns (with sample rows for content-based fallback)
-        mapper = ColumnMapper(headers, sample_rows=rows[:20])
-        col_map = mapper.detect()
+        for f, c in cm.items():
+            if c and mapper.confidence.get(f, 0) >= 0.85:
+                hints[f] = c
 
-        diagnostics["column_mappings"][sheet_name] = {k: v for k, v in col_map.items() if v}
-        diagnostics["column_confidence"][sheet_name] = mapper.confidence
+        diag["column_mappings"][sn] = {k: v for k, v in cm.items() if v}
+        diag["column_confidence"][sn] = mapper.confidence
+        if mapper.rejected:
+            diag["column_rejected"][sn] = mapper.rejected
         if mapper.uom_map:
-            diagnostics["uom_detected"][sheet_name] = mapper.uom_map
-        diagnostics["warnings"].extend(mapper.warnings)
+            diag["uom_detected"][sn] = mapper.uom_map
+        diag["warnings"].extend(mapper.warnings)
 
-        logger.info(f"Sheet '{sheet_name}' mapping result: {col_map}")
+        rows = forward_fill_rows(rows, sheet_name=sn)
+        si: List[Dict] = []
+        for idx, r in enumerate(rows):
+            si.append(normalize_row(r, cm, sn, idx + 1, diag["warnings"], uom_map=mapper.uom_map))
 
-        # Forward fill: propagate category/assembly context down empty cells
-        rows = forward_fill_rows(rows, sheet_name=sheet_name)
+        fb = sum(1 for x in si if " | " in x.get("description", ""))
+        diag["fallback_count"] += fb
+        all_norm.extend(si)
 
-        # Normalize — ALWAYS append, NEVER overwrite
-        sheet_items = []
-        for idx, row in enumerate(rows):
-            result = normalize_row(row, col_map, sheet_name, idx + 1, diagnostics["warnings"], uom_map=mapper.uom_map)
-            sheet_items.append(result)
+    pre = len(all_norm)
+    all_norm = deduplicate(all_norm)
+    diag["total_output_rows"] = len(all_norm)
+    diag["dedup_before"] = pre
+    diag["dedup_after"] = len(all_norm)
 
-        logger.info(f"Sheet '{sheet_name}': {len(sheet_items)} items normalized")
-        all_normalized.extend(sheet_items)
-
-    # Non-destructive dedup
-    pre_count = len(all_normalized)
-    all_normalized = deduplicate(all_normalized)
-    post_count = len(all_normalized)
-    diagnostics["total_output_rows"] = post_count
-    diagnostics["dedup_before"] = pre_count
-    diagnostics["dedup_after"] = post_count
-
-    # Convert to NormalizedBOMItem
     items: List[NormalizedBOMItem] = []
-    for idx, row in enumerate(all_normalized):
-        items.append(
-            NormalizedBOMItem(
-                item_id=f"BOM-{idx + 1:04d}",
-                raw_text=row.get("description", "") or row.get("part_number", ""),
-                standard_text=row.get("normalized_description", ""),
-                quantity=max(1, int(row.get("quantity", 1))),
-                description=row.get("normalized_description", ""),
-                part_number=row.get("part_number", "") or "",
-                mpn=row.get("part_number", "") or "",
-                manufacturer=row.get("manufacturer", "") or "",
-                make=row.get("manufacturer", "") or "",
-                material=row.get("material", "") or "",
-                notes="",
-                raw_row={str(k): str(v) for k, v in row.items()},
-            )
-        )
+    for idx, r in enumerate(all_norm):
+        rd = r.get("raw_description", "") or r.get("description", "")
+        nd = r.get("normalized_description", "")
+        ss = r.get("source_sheet", "")
+        final_desc = rd or nd
+        final_pn = r.get("part_number", "") or ""
 
-    logger.info(f"UBNE complete: {len(sheets)} sheets, {pre_count} raw → {len(items)} items")
-    logger.info(f"Total items across all sheets: {len(items)}")
+        if not final_desc and not final_pn:
+            diag["warnings"].append(f"BOM-{idx + 1:04d}: empty desc + pn")
+            logger.warning(f"BOM-{idx + 1:04d}: empty description and part_number")
 
-    return items, diagnostics
+        raw_row_out = {str(k): str(v) for k, v in r.items()}
+        raw_row_out["source_sheet"] = ss
+
+        items.append(NormalizedBOMItem(
+            item_id=f"BOM-{idx + 1:04d}",
+            raw_text=rd or final_pn,
+            standard_text=nd,
+            quantity=max(1, round(float(r.get("quantity", 1)), 2)),
+            description=final_desc,
+            part_number=final_pn,
+            mpn=final_pn,
+            manufacturer=r.get("manufacturer", "") or "",
+            make=r.get("manufacturer", "") or "",
+            material=r.get("material", "") or "",
+            notes=f"[Sheet: {ss}]" if ss else "",
+            raw_row=raw_row_out,
+        ))
+
+    warn_count = len([i for i in items if not i.description and not i.part_number])
+    default_qty = len([i for i in items if i.quantity == 1])
+    diag["empty_row_warnings"] = warn_count
+    diag["default_quantity_rows"] = default_qty
+
+    logger.info(
+        f"UBNE v1.4: {len(sheets)} sheets, {pre} raw -> {len(items)} items, "
+        f"{diag['fallback_count']} fallbacks, {warn_count} warnings, {default_qty} default-qty"
+    )
+    return items, diag
