@@ -4,12 +4,14 @@ BOM Intelligence Engine — main.py
 Deploy (Railway/uvicorn):  uvicorn main:app --host 0.0.0.0 --port $PORT
 CLI:                       python main.py --sample
 """
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
 import sys, os, json, csv, shutil, uuid, tempfile, argparse, logging
 from pathlib import Path
 from datetime import datetime
-
+from fastapi import Request, HTTPException
 sys.path.insert(0, str(Path(__file__).parent))
-
+from fastapi import Depends, status
+from fastapi.responses import JSONResponse
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,6 +50,11 @@ def root():
             "iterations": engine.dm.iterations,
         },
     }
+def verify_internal_key(request: Request):
+    if INTERNAL_API_KEY:
+        key = request.headers.get("X-Internal-Key", "")
+        if key != INTERNAL_API_KEY:
+            raise HTTPException(403, "Invalid internal key")
 
 @app.get("/health")
 def health():
