@@ -4,7 +4,7 @@ BOM Intelligence Engine — main.py
 Deploy (Railway/uvicorn):  uvicorn main:app --host 0.0.0.0 --port $PORT
 CLI:                       python main.py --sample
 """
-INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
+
 import sys, os, json, csv, shutil, uuid, tempfile, argparse, logging
 from pathlib import Path
 from datetime import datetime
@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from engine.orchestrator import BOMIntelligenceEngine
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
 # =========================================================
 # FastAPI app — MODULE LEVEL (required for uvicorn main:app)
 # =========================================================
