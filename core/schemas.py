@@ -7,9 +7,20 @@ from enum import Enum
 
 class PartCategory(str, Enum):
     STANDARD = "standard"
+    ELECTRICAL = "electrical"
+    ELECTRONICS = "electronics"
+    FASTENER = "fastener"
+    CUSTOM_MECHANICAL = "custom_mechanical"
+    SHEET_METAL = "sheet_metal"
     RAW_MATERIAL = "raw_material"
-    CUSTOM = "custom"
     UNKNOWN = "unknown"
+
+
+class ProcurementClass(str, Enum):
+    CATALOG_PURCHASE = "catalog_purchase"
+    RFQ_REQUIRED = "rfq_required"
+    ENGINEERING_REVIEW = "engineering_review"
+    RAW_STOCK = "raw_stock"
 
 
 class ClassificationPath(str, Enum):
@@ -76,3 +87,7 @@ class ClassifiedItem(NormalizedBOMItem):
     geometry: Optional[GeometryComplexity] = None
     tolerance: Optional[ToleranceClass] = None
     secondary_ops: List[str] = field(default_factory=list)
+    # --- NEW procurement intent fields ---
+    procurement_class: ProcurementClass = ProcurementClass.CATALOG_PURCHASE
+    rfq_required: bool = False
+    drawing_required: bool = False

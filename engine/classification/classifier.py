@@ -1,19 +1,24 @@
 """
-PHASE 2 — Strict Classification Engine.
+PHASE 2 — Strict Classification Engine (FIXED).
 
-Priority order:
-  1. Has valid MPN or recognized brand → STANDARD (3_1)
-  2. Custom fabrication signals → CUSTOM (3_3)  [checked BEFORE raw to handle overlap]
-  3. Base material signals → RAW (3_2)
-  4. Generic component keyword → STANDARD (3_1)
-  5. Material-in-field fallback → CUSTOM (3_3)
-  6. Unknown fallback → STANDARD (low confidence)
+Priority order (CHANGED — custom checked BEFORE brand/MPN):
+  1. Custom fabrication signals → CUSTOM_MECHANICAL or SHEET_METAL (3_3)
+  2. Sheet metal signals → SHEET_METAL (3_3)
+  3. Raw material signals → RAW_MATERIAL (3_2)
+  4. Has valid MPN AND recognized brand → ELECTRICAL or ELECTRONICS (3_1)
+  5. Has valid MPN only (format-validated) → STANDARD or ELECTRONICS (3_1)
+  6. Fastener keywords → FASTENER (3_1)
+  7. Electrical keywords → ELECTRICAL (3_1)
+  8. Electronics keywords → ELECTRONICS (3_1)
+  9. Generic standard keywords → STANDARD (3_1)
+  10. Material field present → CUSTOM_MECHANICAL (3_3)
+  11. Fallback → UNKNOWN (NOT standard)
 """
 import re
 from typing import List, Optional, Set
 from core.schemas import (
-    NormalizedBOMItem, ClassifiedItem, PartCategory, ClassificationPath,
-    MaterialForm, GeometryComplexity, ToleranceClass,
+    NormalizedBOMItem, ClassifiedItem, PartCategory, ProcurementClass,
+    ClassificationPath, MaterialForm, GeometryComplexity, ToleranceClass,
 )
 
 # ---- Knowledge bases ----
@@ -24,27 +29,48 @@ KNOWN_BRANDS: Set[str] = {
     "misumi","mcmaster","bosch","siemens","abb","schneider","skf","omron","phoenix contact",
 }
 
+# MPN patterns — must match to count as a real MPN
 MPN_PATTERNS = [
     re.compile(r"^[A-Z]{2,4}\d{3,}", re.I),
     re.compile(r"^\d{3,}-\d{3,}"),
     re.compile(r"^[A-Z]+\d+[A-Z]+\d+", re.I),
     re.compile(r"^ERJ-\d+", re.I),
     re.compile(r"^GRM\d+", re.I),
+    re.compile(r"^[A-Z]{1,3}\d{4,}", re.I),          # e.g. LM7805, NE555
+    re.compile(r"^\d{4,}[A-Z]{1,3}\d*", re.I),        # e.g. 2N2222A
 ]
 
-STANDARD_KW = {
-    "resistor","capacitor","inductor","ferrite","thermistor","varistor","potentiometer",
-    "fuse","integrated_circuit","microcontroller","transistor","mosfet","diode","led",
-    "regulator","sensor","connector","header","terminal","socket","plug","usb",
+# ---- Keyword sets (expanded) ----
+
+ELECTRICAL_KW = {
+    "resistor","capacitor","inductor","ferrite","thermistor","varistor",
+    "potentiometer","fuse",
+}
+
+ELECTRONICS_KW = {
+    "integrated_circuit","microcontroller","transistor","mosfet","diode","led",
+    "regulator","sensor","connector","header","terminal","socket","plug","usb","pcb",
+    "relay","crystal","oscillator","transformer","switch","optocoupler","amplifier",
+    "comparator","adc","dac","fpga","memory","eeprom","flash",
+}
+
+FASTENER_KW = {
     "hex_bolt","screw","nut","washer","rivet","spring","bearing","bushing",
-    "o-ring","gasket","seal","gear","sprocket","pulley","pcb",
+    "o-ring","gasket","seal","gear","sprocket","pulley","pin","circlip",
+    "cotter","dowel","stud","anchor","insert","standoff","spacer",
 }
 
 CUSTOM_KW = {
     "machined","cnc","milled","turned","fabricated","custom","bespoke",
     "as_per_drawing","per_drawing","welded","assembled","fabrication",
     "bracket","housing","enclosure","fixture","jig","tooling","mold",
-    "manifold","chassis","frame","panel","weldment",
+    "manifold","chassis","frame","weldment",
+}
+
+SHEET_METAL_KW = {
+    "sheet_metal","laser_cut","laser_cutting","press_brake","stamped",
+    "punched","formed","bent","panel","cover","plate_fabricated",
+    "sheet_fabricated","bracket_sheet",
 }
 
 CUSTOM_PAT = [
@@ -53,9 +79,14 @@ CUSTOM_PAT = [
     re.compile(r"\bmachined\s+\w+", re.I),
     re.compile(r"\bcnc\s+\w+", re.I),
     re.compile(r"\bfabricat\w+", re.I),
-    re.compile(r"\bbracket\b", re.I),
-    re.compile(r"\bhousing\b", re.I),
-    re.compile(r"\benclosure\b", re.I),
+]
+
+SHEET_METAL_PAT = [
+    re.compile(r"\bsheet\s*metal\b", re.I),
+    re.compile(r"\blaser\s*cut\b", re.I),
+    re.compile(r"\bpress\s*brake\b", re.I),
+    re.compile(r"\bstamp(ed|ing)\b", re.I),
+    re.compile(r"\bbend(ing)?\b", re.I),
 ]
 
 RAW_KW = {
@@ -66,13 +97,17 @@ RAW_KW = {
     "pom","pvc","polypropylene","carbon_fiber","kevlar",
     "rubber_sheet","silicone","neoprene",
     "raw_material","stock_material","bar_stock","sheet_stock",
-    "tube_stock","plate","billet","ingot","blank",
+    "tube_stock","billet","ingot","blank",
 }
 
 RAW_PAT = [
     re.compile(r"\b(steel|aluminum|copper|brass|bronze)\s+(bar|rod|tube|pipe|sheet|plate|billet)\b", re.I),
     re.compile(r"\b(round|square|hex|flat)\s+(bar|stock)\b", re.I),
 ]
+
+STANDARD_KW = {
+    "gear","sprocket","pulley",
+}
 
 # ---- Attribute detectors ----
 def _material_form(t: str) -> Optional[MaterialForm]:
@@ -112,7 +147,6 @@ def _secondary_ops(t: str) -> List[str]:
     return ops
 
 def _has_kw(text: str, keywords: Set[str]) -> Optional[str]:
-    """Check if any keyword is in text (handles underscores)."""
     tl = text.lower()
     for kw in keywords:
         if kw in tl or kw.replace("_", " ") in tl:
@@ -122,36 +156,52 @@ def _has_kw(text: str, keywords: Set[str]) -> Optional[str]:
 def _has_pat(text: str, patterns: list) -> bool:
     return any(p.search(text) for p in patterns)
 
+def _is_valid_mpn(mpn: str) -> bool:
+    """Validate MPN against known part number formats. Rejects drawing numbers and short codes."""
+    if not mpn or len(mpn) < 3:
+        return False
+    clean = mpn.strip()
+    # Reject purely numeric short strings (likely row numbers or quantities)
+    if clean.isdigit() and len(clean) < 5:
+        return False
+    # Reject common drawing/internal prefixes
+    drawing_prefixes = ("DWG", "DRG", "DRAW", "ASSY", "PART-", "ITEM-", "REF-")
+    if any(clean.upper().startswith(p) for p in drawing_prefixes):
+        return False
+    return any(p.match(clean) for p in MPN_PATTERNS)
+
+def _set_procurement_intent(c: ClassifiedItem) -> ClassifiedItem:
+    """Set procurement_class, rfq_required, drawing_required based on category."""
+    if c.category in (PartCategory.CUSTOM_MECHANICAL, PartCategory.SHEET_METAL):
+        c.procurement_class = ProcurementClass.RFQ_REQUIRED
+        c.rfq_required = True
+        c.drawing_required = True
+    elif c.category == PartCategory.RAW_MATERIAL:
+        c.procurement_class = ProcurementClass.RAW_STOCK
+        c.rfq_required = False
+        c.drawing_required = False
+    elif c.category == PartCategory.UNKNOWN:
+        c.procurement_class = ProcurementClass.ENGINEERING_REVIEW
+        c.rfq_required = False
+        c.drawing_required = False
+    else:
+        # STANDARD, ELECTRICAL, ELECTRONICS, FASTENER
+        c.procurement_class = ProcurementClass.CATALOG_PURCHASE
+        c.rfq_required = False
+        c.drawing_required = False
+    return c
+
+
 # ---- Main classifier ----
 def classify_item(item: NormalizedBOMItem) -> ClassifiedItem:
     text = item.standard_text.lower()
     combined = f"{text} {item.mpn} {item.manufacturer} {item.material} {item.notes}".lower()
     c = ClassifiedItem(**{k: getattr(item, k) for k in item.__dataclass_fields__})
 
-    # ---- Rule 1: MPN or Brand → STANDARD ----
-    has_mpn = bool(item.mpn and len(item.mpn) >= 3)
-    if has_mpn:
-        c.has_mpn = True  # any 3+ char part number counts
-
-    has_brand = False
-    mfr = item.manufacturer.strip().lower()
-    if len(mfr) >= 2:
-        for b in KNOWN_BRANDS:
-            if b in mfr or mfr in b:
-                has_brand = True; break
-    c.has_brand = has_brand
-
-    if c.has_mpn or has_brand:
-        c.category = PartCategory.STANDARD
-        c.classification_path = ClassificationPath.PATH_3_1
-        c.confidence = 0.95 if (c.has_mpn and has_brand) else 0.85
-        c.classification_reason = f"MPN={'Y' if c.has_mpn else 'N'}, Brand={'Y' if has_brand else 'N'}"
-        return c
-
-    # ---- Rule 2: Custom fabrication → CUSTOM (checked BEFORE raw) ----
+    # ---- Rule 1: Custom fabrication → CUSTOM_MECHANICAL (checked FIRST) ----
     kw = _has_kw(combined, CUSTOM_KW)
     if kw or _has_pat(combined, CUSTOM_PAT):
-        c.category = PartCategory.CUSTOM
+        c.category = PartCategory.CUSTOM_MECHANICAL
         c.classification_path = ClassificationPath.PATH_3_3
         c.is_custom = True
         c.confidence = 0.82 if kw else 0.72
@@ -160,9 +210,23 @@ def classify_item(item: NormalizedBOMItem) -> ClassifiedItem:
         c.geometry = _geometry(combined)
         c.tolerance = _tolerance(combined)
         c.secondary_ops = _secondary_ops(combined)
-        return c
+        return _set_procurement_intent(c)
 
-    # ---- Rule 3: Raw material → RAW ----
+    # ---- Rule 2: Sheet metal signals → SHEET_METAL ----
+    kw = _has_kw(combined, SHEET_METAL_KW)
+    if kw or _has_pat(combined, SHEET_METAL_PAT):
+        c.category = PartCategory.SHEET_METAL
+        c.classification_path = ClassificationPath.PATH_3_3
+        c.is_custom = True
+        c.confidence = 0.80 if kw else 0.70
+        c.classification_reason = f"Sheet metal: '{kw}'" if kw else "Sheet metal pattern"
+        c.material_form = _material_form(combined)
+        c.geometry = _geometry(combined)
+        c.tolerance = _tolerance(combined)
+        c.secondary_ops = _secondary_ops(combined)
+        return _set_procurement_intent(c)
+
+    # ---- Rule 3: Raw material → RAW_MATERIAL ----
     kw = _has_kw(combined, RAW_KW)
     if kw or _has_pat(combined, RAW_PAT):
         c.category = PartCategory.RAW_MATERIAL
@@ -171,21 +235,86 @@ def classify_item(item: NormalizedBOMItem) -> ClassifiedItem:
         c.confidence = 0.85 if kw else 0.75
         c.classification_reason = f"Raw: '{kw}'" if kw else "Raw pattern"
         c.material_form = _material_form(combined)
-        return c
+        return _set_procurement_intent(c)
 
-    # ---- Rule 4: Generic component keyword → STANDARD ----
+    # ---- Rule 4: MPN or Brand → ELECTRICAL / ELECTRONICS / STANDARD ----
+    has_mpn = _is_valid_mpn(item.mpn)
+    if has_mpn:
+        c.has_mpn = True
+
+    has_brand = False
+    mfr = item.manufacturer.strip().lower()
+    if len(mfr) >= 2:
+        for b in KNOWN_BRANDS:
+            if b in mfr or mfr in b:
+                has_brand = True
+                break
+    c.has_brand = has_brand
+
+    if c.has_mpn or has_brand:
+        # Determine sub-category based on keywords
+        elec_kw = _has_kw(combined, ELECTRICAL_KW)
+        elect_kw = _has_kw(combined, ELECTRONICS_KW)
+        fast_kw = _has_kw(combined, FASTENER_KW)
+
+        if elec_kw:
+            c.category = PartCategory.ELECTRICAL
+        elif elect_kw:
+            c.category = PartCategory.ELECTRONICS
+        elif fast_kw:
+            c.category = PartCategory.FASTENER
+        else:
+            # Default branded/MPN items to ELECTRONICS if brand is electronic
+            c.category = PartCategory.ELECTRONICS if has_brand else PartCategory.STANDARD
+
+        c.classification_path = ClassificationPath.PATH_3_1
+        c.confidence = 0.95 if (c.has_mpn and has_brand) else 0.85
+        c.classification_reason = f"MPN={'Y' if c.has_mpn else 'N'}, Brand={'Y' if has_brand else 'N'}"
+        return _set_procurement_intent(c)
+
+    # ---- Rule 5: Fastener keywords → FASTENER ----
+    kw = _has_kw(combined, FASTENER_KW)
+    if kw:
+        c.category = PartCategory.FASTENER
+        c.classification_path = ClassificationPath.PATH_3_1
+        c.is_generic = True
+        c.confidence = 0.82
+        c.classification_reason = f"Fastener: '{kw}'"
+        return _set_procurement_intent(c)
+
+    # ---- Rule 6: Electrical keywords → ELECTRICAL ----
+    kw = _has_kw(text, ELECTRICAL_KW)
+    if kw:
+        c.category = PartCategory.ELECTRICAL
+        c.classification_path = ClassificationPath.PATH_3_1
+        c.is_generic = True
+        c.confidence = 0.80
+        c.classification_reason = f"Electrical: '{kw}'"
+        return _set_procurement_intent(c)
+
+    # ---- Rule 7: Electronics keywords → ELECTRONICS ----
+    kw = _has_kw(text, ELECTRONICS_KW)
+    if kw:
+        c.category = PartCategory.ELECTRONICS
+        c.classification_path = ClassificationPath.PATH_3_1
+        c.is_generic = True
+        c.confidence = 0.80
+        c.classification_reason = f"Electronics: '{kw}'"
+        return _set_procurement_intent(c)
+
+    # ---- Rule 8: Generic standard keywords → STANDARD ----
     kw = _has_kw(text, STANDARD_KW)
     if kw:
         c.category = PartCategory.STANDARD
         c.classification_path = ClassificationPath.PATH_3_1
         c.is_generic = True
-        c.confidence = 0.80
-        c.classification_reason = f"Generic: '{kw}'"
-        return c
+        c.confidence = 0.75
+        c.classification_reason = f"Standard: '{kw}'"
+        return _set_procurement_intent(c)
 
-    # ---- Rule 5: Has material field → likely CUSTOM ----
+    # ---- Rule 9: Has material field → likely CUSTOM ----
     if item.material.strip():
-        c.category = PartCategory.CUSTOM
+        c.category = PartCategory.CUSTOM_MECHANICAL
         c.classification_path = ClassificationPath.PATH_3_3
         c.is_custom = True
         c.confidence = 0.50
@@ -194,14 +323,14 @@ def classify_item(item: NormalizedBOMItem) -> ClassifiedItem:
         c.geometry = _geometry(combined)
         c.tolerance = _tolerance(combined)
         c.secondary_ops = _secondary_ops(combined)
-        return c
+        return _set_procurement_intent(c)
 
-    # ---- Rule 6: Unknown fallback ----
-    c.category = PartCategory.STANDARD
+    # ---- Rule 10: Unknown fallback → UNKNOWN (NOT standard) ----
+    c.category = PartCategory.UNKNOWN
     c.classification_path = ClassificationPath.PATH_3_1
-    c.confidence = 0.40
-    c.classification_reason = "Fallback: no signals"
-    return c
+    c.confidence = 0.30
+    c.classification_reason = "Fallback: no signals — needs review"
+    return _set_procurement_intent(c)
 
 def classify_bom(items: List[NormalizedBOMItem]) -> List[ClassifiedItem]:
     return [classify_item(i) for i in items]

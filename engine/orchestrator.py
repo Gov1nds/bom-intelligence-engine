@@ -3,7 +3,7 @@ BOM Intelligence Engine — Pure Function Orchestrator
 
 ONLY does:
   P1: Ingestion & Normalization (UBNE)
-  P2: Classification
+  P2: Classification (expanded taxonomy)
   P2.5: Specification Extraction
 
 Returns structured JSON. No pricing. No decisions. No memory. No reports.
@@ -97,34 +97,31 @@ class BOMIntelligenceEngine:
                 "geometry": ci.geometry.value if ci.geometry else None,
                 "tolerance": ci.tolerance.value if ci.tolerance else None,
                 "secondary_ops": ci.secondary_ops or [],
+                # Procurement intent (NEW)
+                "procurement_class": ci.procurement_class.value if ci.procurement_class else "catalog_purchase",
+                "rfq_required": ci.rfq_required,
+                "drawing_required": ci.drawing_required,
                 # Specs
                 "specs": specs_data.get(ci.item_id, {}),
             }
             components.append(comp)
 
+        # Expanded category summary
+        all_cats = set(PartCategory)
+        cat_counts = {}
+        for cat in all_cats:
+            cat_counts[cat.value] = sum(1 for c in components if c["category"] == cat.value)
+
         result = {
             "components": components,
             "summary": {
                 "total_items": len(components),
-                "categories": {
-                    "standard": sum(
-                        1 for c in components if c["category"] == "standard"
-                    ),
-                    "custom": sum(
-                        1 for c in components if c["category"] == "custom"
-                    ),
-                    "raw_material": sum(
-                        1 for c in components if c["category"] == "raw_material"
-                    ),
-                    "unknown": sum(
-                        1 for c in components if c["category"] == "unknown"
-                    ),
-                },
+                "categories": cat_counts,
             },
             "_meta": {
                 "total_time_s": round(time.time() - t0, 3),
                 "phase_times": pt,
-                "version": "3.0.0",
+                "version": "4.0.0",
             },
         }
 
