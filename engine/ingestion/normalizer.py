@@ -121,6 +121,74 @@ def normalize_text(text: str) -> str:
     # Clean whitespace
     return re.sub(r"\s+", " ", r).strip()
 
+# ---- Package / footprint normalization ----
+_PACKAGE_NORM = {
+    "0201": "0201", "0402": "0402", "0603": "0603", "0805": "0805",
+    "1206": "1206", "1210": "1210", "2010": "2010", "2512": "2512",
+    "sot23": "SOT-23", "sot-23": "SOT-23", "sot223": "SOT-223", "sot-223": "SOT-223",
+    "soic8": "SOIC-8", "soic-8": "SOIC-8", "soic16": "SOIC-16", "soic-16": "SOIC-16",
+    "tssop": "TSSOP", "qfn": "QFN", "qfp": "QFP", "bga": "BGA",
+    "dip8": "DIP-8", "dip-8": "DIP-8", "dip16": "DIP-16", "dip-16": "DIP-16",
+    "dip14": "DIP-14", "dip-14": "DIP-14",
+    "to92": "TO-92", "to-92": "TO-92", "to220": "TO-220", "to-220": "TO-220",
+    "lqfp": "LQFP", "sop": "SOP",
+}
+_PACKAGE_RE = re.compile(
+    r"\b(0201|0402|0603|0805|1206|1210|2010|2512|"
+    r"SOT-?\d+|SOIC-?\d*|TSSOP-?\d*|QFN-?\d*|QFP-?\d*|BGA-?\d*|"
+    r"DIP-?\d*|TO-?\d+|LQFP-?\d*|SOP-?\d*)\b", re.I
+)
+
+def normalize_package(pkg: str) -> str:
+    """Normalize package/footprint notation to canonical form."""
+    if not pkg or not pkg.strip():
+        return ""
+    s = pkg.strip().lower().replace(" ", "")
+    if s in _PACKAGE_NORM:
+        return _PACKAGE_NORM[s]
+    # Try regex match
+    m = _PACKAGE_RE.search(pkg)
+    if m:
+        return m.group(1).upper()
+    return pkg.strip()
+
+
+# ---- Process hint normalization ----
+_PROCESS_NORM = {
+    "cnc": "CNC_machining", "cnc machining": "CNC_machining", "cnc milling": "CNC_milling",
+    "cnc turning": "CNC_turning", "milling": "CNC_milling", "turning": "CNC_turning",
+    "3 axis": "CNC_3axis", "5 axis": "CNC_5axis", "5-axis": "CNC_5axis",
+    "laser cut": "laser_cutting", "laser cutting": "laser_cutting",
+    "waterjet": "waterjet_cutting", "water jet": "waterjet_cutting",
+    "plasma": "plasma_cutting", "plasma cut": "plasma_cutting",
+    "press brake": "press_brake", "bending": "press_brake", "bend": "press_brake",
+    "stamping": "stamping", "stamped": "stamping",
+    "die casting": "die_casting", "die cast": "die_casting",
+    "injection molding": "injection_molding", "injection mold": "injection_molding",
+    "3d printing": "additive_3d", "additive": "additive_3d", "sls": "SLS", "sla": "SLA",
+    "edm": "EDM", "wire edm": "wire_EDM",
+    "grinding": "grinding", "honing": "honing",
+    "welding": "welding", "welded": "welding", "tig": "TIG_welding", "mig": "MIG_welding",
+    "threading": "threading", "tapping": "threading",
+    "anodizing": "anodizing", "anodised": "anodizing",
+    "powder coating": "powder_coating", "plating": "plating",
+    "heat treatment": "heat_treatment", "hardening": "heat_treatment",
+    "forging": "forging", "casting": "casting",
+}
+
+def normalize_process(process: str) -> str:
+    """Normalize process/operation hints to canonical form."""
+    if not process or not process.strip():
+        return ""
+    s = process.strip().lower()
+    if s in _PROCESS_NORM:
+        return _PROCESS_NORM[s]
+    # Try prefix match
+    for key, val in _PROCESS_NORM.items():
+        if key in s:
+            return val
+    return re.sub(r"\s+", "_", s).strip("_")
+
 # ---- Column mapping ----
 COL_ALIASES = {
     "part_name": ["part_name","part name","part","component","item","description","name","part description","item name"],

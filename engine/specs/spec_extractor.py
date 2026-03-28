@@ -118,6 +118,14 @@ _STANDARDS = {
 }
 _STANDARD_PAT = re.compile(r"\b((?:DIN|ISO|ANSI|ASTM|JIS|BS)\s*\d+[A-Z]?)\b", re.I)
 
+# -- Drawing / Revision --
+_DRAWING_PAT = re.compile(
+    r"\b(?:DWG|DRG|DRAW(?:ING)?|DRWG)[\s.\-#:]*([A-Z0-9][\w\-./]{2,30})\b", re.I
+)
+_REVISION_PAT = re.compile(
+    r"\b(?:REV|REVISION)[\s.\-#:]*([A-Z0-9]{1,10})\b", re.I
+)
+
 # -- Electrical --
 _RESISTANCE = re.compile(r"\b(\d+(?:\.\d+)?)\s*([mkMG]?)(?:Ω|ohm|OHM)\b", re.I)
 _RESISTANCE_SHORT = re.compile(r"\b(\d+(?:\.\d+)?)\s*([kKmM])\b(?=.*(?:resist|ohm|%|tol))", re.I)
@@ -355,6 +363,14 @@ def extract_mechanical(text: str) -> Dict[str, Any]:
         specs["geometry_class"] = "bracket"
     else:
         specs["geometry_class"] = "general"
+
+    # Drawing / Revision
+    m = _DRAWING_PAT.search(text)
+    if m:
+        specs["drawing_number"] = m.group(1).strip()
+    m = _REVISION_PAT.search(text)
+    if m:
+        specs["revision"] = m.group(1).strip()
 
     return specs
 

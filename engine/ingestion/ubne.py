@@ -55,9 +55,13 @@ COLUMN_MAP: Dict[str, List[str]] = {
         "material description", "material name", "title",
     ],
     "manufacturer": [
-        "mfg", "mfg.", "manufacturer", "brand", "maker", "vendor", "make",
-        "supplier", "oem", "original manufacturer", "manufactured by",
-        "mfr", "manufacturer name", "company", "source",
+        "mfg", "mfg.", "manufacturer", "brand", "maker", "make",
+        "oem", "original manufacturer", "manufactured by",
+        "mfr", "manufacturer name",
+    ],
+    "supplier": [
+        "supplier", "vendor", "source", "distributor", "reseller",
+        "supplier name", "vendor name", "sold by",
     ],
     "material": [
         "material", "mat", "material type", "raw material", "material spec",
@@ -483,9 +487,12 @@ def normalize_description(text: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
-# ── Forward fill (hierarchical only, unchanged from v1.3) ──
+# ── Forward fill (hierarchical + common merged columns) ──
 
 _FF_ALLOWED = {"category", "assembly", "section", "group", "sub assembly", "module"}
+# Columns that are commonly merged in industrial BOMs (carry-down for blanks)
+_FF_MERGE_ALLOWED = {"manufacturer", "material", "supplier", "vendor", "brand", "oem",
+                     "mfg", "make", "source", "material type", "raw material"}
 
 
 def forward_fill_rows(rows: List[Dict], sheet_name: str = "") -> List[Dict]:
@@ -498,14 +505,15 @@ def forward_fill_rows(rows: List[Dict], sheet_name: str = "") -> List[Dict]:
         for k, v in row.items():
             nk = str(k).strip().lower().replace("_", " ").replace("-", " ")
             hier = any(a in nk for a in _FF_ALLOWED)
+            merge = any(a in nk for a in _FF_MERGE_ALLOWED)
             if v is not None and str(v).strip():
-                if hier:
+                if hier or merge:
                     last[k] = v
                 nr[k] = v
             else:
-                nr[k] = last.get(k, "") if hier else ""
+                nr[k] = last.get(k, "") if (hier or merge) else ""
         filled.append(nr)
-    logger.info(f"Forward fill '{sheet_name}': {len(filled)} rows (hierarchical only)")
+    logger.info(f"Forward fill '{sheet_name}': {len(filled)} rows (hierarchical + merged)")
     return filled
 
 
@@ -611,6 +619,7 @@ def normalize_row(
     raw_desc = clean_text(_get("description"))
     qty = parse_quantity(_get("quantity"))
     mfr = clean_manufacturer(_get("manufacturer"))
+    supplier = clean_manufacturer(_get("supplier"))  # Separate supplier field
     mat = clean_text(_get("material"))
     cat = clean_text(_get("category")) or None
     uom = (uom_map or {}).get("quantity")
@@ -672,6 +681,7 @@ def normalize_row(
         "quantity": qty,
         "uom": uom,
         "manufacturer": mfr,
+        "supplier": supplier,
         "material": mat,
         "category": cat,
         "source_sheet": sheet_name,
@@ -788,10 +798,13 @@ def ubne_process_bom(
             part_number=final_pn,
             mpn=_normalize_mpn(final_pn),
             manufacturer=_normalize_mfr(r.get("manufacturer", "") or ""),
+            supplier_name=_normalize_mfr(r.get("supplier", "") or ""),
             make=_normalize_mfr(r.get("manufacturer", "") or ""),
             material=_normalize_material(r.get("material", "") or "") or (r.get("material", "") or ""),
             unit=_normalize_unit(r.get("uom", "") or ""),
             notes=f"[Sheet: {ss}]" if ss else "",
+            source_sheet=ss,
+            source_row=idx + 1,
             raw_row=raw_row_out,
         ))
 

@@ -64,10 +64,13 @@ class NormalizedBOMItem:
     part_number: str = ""
     mpn: str = ""
     manufacturer: str = ""
+    supplier_name: str = ""  # Separate from manufacturer
     make: str = ""
     material: str = ""
     notes: str = ""
     unit: str = "each"
+    source_sheet: str = ""
+    source_row: int = 0
     reference_ids: List[str] = field(default_factory=list)
     raw_row: Dict[str, Any] = field(default_factory=dict)
 

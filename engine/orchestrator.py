@@ -124,6 +124,7 @@ class BOMIntelligenceEngine:
                 "part_number": ci.part_number,
                 "mpn": ci.mpn,
                 "manufacturer": ci.manufacturer,
+                "supplier_name": ci.supplier_name if hasattr(ci, 'supplier_name') else "",
                 "material": ci.material,
                 "notes": ci.notes,
                 "unit": ci.unit,
@@ -148,6 +149,9 @@ class BOMIntelligenceEngine:
                 "drawing_required": ci.drawing_required,
                 # Canonical identity
                 "canonical_part_key": _generate_canonical_key(ci),
+                # Review status
+                "review_status": "auto" if ci.confidence >= 0.7 else "needs_review",
+                "matched_master_id": None,  # Populated by platform-api resolver
                 # Specs
                 "specs": specs_data.get(ci.item_id, {}),
             }
