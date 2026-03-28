@@ -312,17 +312,30 @@ def classify_item(item: NormalizedBOMItem) -> ClassifiedItem:
         c.classification_reason = f"Standard: '{kw}'"
         return _set_procurement_intent(c)
 
-    # ---- Rule 9: Has material field → likely CUSTOM ----
+    # ---- Rule 9: Has material field — check if raw material or needs review ----
+    # FIXED: no longer classifies material-only items as custom by default.
+    # If raw material signals detected → RAW_MATERIAL
+    # Otherwise → ENGINEERING_REVIEW (not custom_mechanical)
     if item.material.strip():
-        c.category = PartCategory.CUSTOM_MECHANICAL
-        c.classification_path = ClassificationPath.PATH_3_3
-        c.is_custom = True
-        c.confidence = 0.50
-        c.classification_reason = "Fallback: material specified"
+        mat_lower = item.material.strip().lower()
+        mat_combined = f"{text} {mat_lower}"
+        raw_kw = _has_kw(mat_combined, RAW_KW)
+        raw_pat = _has_pat(mat_combined, RAW_PAT)
+        if raw_kw or raw_pat:
+            c.category = PartCategory.RAW_MATERIAL
+            c.classification_path = ClassificationPath.PATH_3_2
+            c.is_raw = True
+            c.confidence = 0.55
+            c.classification_reason = f"Material-only fallback → raw: '{raw_kw or 'pattern'}'"
+            c.material_form = _material_form(mat_combined)
+            return _set_procurement_intent(c)
+
+        # Material specified but no raw/custom/standard signals → needs review
+        c.category = PartCategory.UNKNOWN
+        c.classification_path = ClassificationPath.PATH_3_1
+        c.confidence = 0.35
+        c.classification_reason = f"Material '{item.material.strip()[:30]}' specified but no classification signals — needs review"
         c.material_form = _material_form(combined)
-        c.geometry = _geometry(combined)
-        c.tolerance = _tolerance(combined)
-        c.secondary_ops = _secondary_ops(combined)
         return _set_procurement_intent(c)
 
     # ---- Rule 10: Unknown fallback → UNKNOWN (NOT standard) ----

@@ -9,6 +9,8 @@ ONLY does:
 Returns structured JSON. No pricing. No decisions. No memory. No reports.
 """
 import time
+import hashlib
+import re
 import logging
 from typing import Dict, Any, List
 
@@ -17,6 +19,42 @@ from engine.classification.classifier import classify_bom
 from core.schemas import PartCategory
 
 logger = logging.getLogger(__name__)
+
+
+def _generate_canonical_key(ci) -> str:
+    """
+    Generate a stable, deterministic canonical part key from normalized attributes.
+    Format: {domain}:{form_or_type}:{key_specs}
+    Keys are lowercase, no spaces, reproducible.
+    """
+    domain = ci.category.value if ci.category else "unknown"
+
+    # For MPN-based parts, use mpn as key
+    if ci.has_mpn and ci.mpn and len(ci.mpn.strip()) >= 4:
+        clean_mpn = re.sub(r"[\s\-_]", "", ci.mpn.strip().upper())
+        mfr = re.sub(r"[\s\-_]", "", ci.manufacturer.strip().lower())[:20] if ci.manufacturer else ""
+        if mfr:
+            return f"{domain}:mpn:{mfr}:{clean_mpn}".lower()
+        return f"{domain}:mpn:{clean_mpn}".lower()
+
+    # For material/form based parts
+    form = ci.material_form.value if ci.material_form else ""
+    material = re.sub(r"[\s_]+", "_", ci.material.strip().lower())[:30] if ci.material else ""
+    desc = re.sub(r"[\s_]+", "_", ci.standard_text.strip().lower())[:40] if ci.standard_text else ""
+
+    parts = [domain]
+    if form:
+        parts.append(form)
+    if material:
+        parts.append(material)
+    if desc:
+        parts.append(desc)
+
+    key = ":".join(parts)
+    # Ensure deterministic: hash long keys
+    if len(key) > 120:
+        key = key[:80] + ":" + hashlib.sha256(key.encode()).hexdigest()[:12]
+    return key
 
 
 class BOMIntelligenceEngine:
@@ -31,6 +69,13 @@ class BOMIntelligenceEngine:
     ) -> Dict[str, Any]:
         t0 = time.time()
         pt: Dict[str, float] = {}
+
+        # ── File checksum ──
+        try:
+            with open(file_path, "rb") as f:
+                file_checksum = hashlib.sha256(f.read()).hexdigest()
+        except Exception:
+            file_checksum = None
 
         # ── Phase 1: Ingestion ──
         ts = time.time()
@@ -101,6 +146,8 @@ class BOMIntelligenceEngine:
                 "procurement_class": ci.procurement_class.value if ci.procurement_class else "catalog_purchase",
                 "rfq_required": ci.rfq_required,
                 "drawing_required": ci.drawing_required,
+                # Canonical identity
+                "canonical_part_key": _generate_canonical_key(ci),
                 # Specs
                 "specs": specs_data.get(ci.item_id, {}),
             }
@@ -121,7 +168,9 @@ class BOMIntelligenceEngine:
             "_meta": {
                 "total_time_s": round(time.time() - t0, 3),
                 "phase_times": pt,
-                "version": "4.0.0",
+                "version": "4.1.0",
+                "file_checksum": file_checksum,
+                "normalizer_version": "ubne_1.4" if ubne_diag else "legacy_1.0",
             },
         }
 

@@ -24,6 +24,72 @@ _ABBREV_SRC = [
 ]
 ABBREVIATIONS = [(re.compile(p, re.I), r) for p, r in _ABBREV_SRC]
 
+# ---- Unit normalization ----
+_UNIT_MAP = {
+    "pcs": "each", "pieces": "each", "pc": "each", "ea": "each",
+    "nos": "each", "no": "each", "units": "each", "unit": "each",
+    "set": "set", "sets": "set", "pair": "pair", "pairs": "pair",
+    "kg": "kg", "kgs": "kg", "kilogram": "kg", "kilograms": "kg",
+    "g": "g", "gm": "g", "gms": "g", "gram": "g", "grams": "g",
+    "lb": "lb", "lbs": "lb", "pound": "lb", "pounds": "lb",
+    "oz": "oz", "ounce": "oz", "ounces": "oz",
+    "m": "m", "mtr": "m", "meter": "m", "meters": "m", "metre": "m", "metres": "m",
+    "mm": "mm", "millimeter": "mm", "millimeters": "mm",
+    "cm": "cm", "centimeter": "cm", "centimeters": "cm",
+    "in": "in", "inch": "in", "inches": "in",
+    "ft": "ft", "feet": "ft", "foot": "ft",
+    "l": "l", "ltr": "l", "liter": "l", "liters": "l", "litre": "l", "litres": "l",
+    "ml": "ml", "milliliter": "ml", "milliliters": "ml",
+    "roll": "roll", "rolls": "roll",
+    "reel": "reel", "reels": "reel",
+    "box": "box", "boxes": "box",
+    "pack": "pack", "packs": "pack",
+    "bag": "bag", "bags": "bag",
+    "sheet": "sheet", "sheets": "sheet",
+    "length": "length", "lengths": "length",
+}
+
+def normalize_unit(unit: str) -> str:
+    """Normalize UOM to a canonical form."""
+    if not unit or not unit.strip():
+        return "each"
+    s = unit.strip().lower().rstrip(".")
+    return _UNIT_MAP.get(s, s)
+
+
+# ---- Material name normalization ----
+_MATERIAL_NORM = {
+    "ss 304": "stainless_steel_304", "ss304": "stainless_steel_304", "stainless steel 304": "stainless_steel_304",
+    "ss 316": "stainless_steel_316", "ss316": "stainless_steel_316", "stainless steel 316": "stainless_steel_316",
+    "ss 316l": "stainless_steel_316l", "ss316l": "stainless_steel_316l",
+    "ss 202": "stainless_steel_202", "ss202": "stainless_steel_202",
+    "ms": "mild_steel", "mild steel": "mild_steel", "carbon steel": "carbon_steel",
+    "al 6061": "aluminum_6061", "al6061": "aluminum_6061", "aluminium 6061": "aluminum_6061", "aluminum 6061": "aluminum_6061",
+    "al 7075": "aluminum_7075", "al7075": "aluminum_7075", "aluminum 7075": "aluminum_7075",
+    "gi": "galvanized_iron", "galvanized iron": "galvanized_iron",
+    "cu": "copper", "brass": "brass", "bronze": "bronze",
+    "nylon": "nylon", "abs": "abs", "pom": "pom", "delrin": "pom",
+    "ptfe": "ptfe", "teflon": "ptfe", "peek": "peek", "hdpe": "hdpe", "pvc": "pvc",
+    "polycarbonate": "polycarbonate", "pc": "polycarbonate",
+    "titanium": "titanium", "ti": "titanium",
+    "inconel": "inconel", "nickel alloy": "nickel_alloy",
+}
+
+def normalize_material_name(material: str) -> str:
+    """Normalize material name variants to canonical forms."""
+    if not material or not material.strip():
+        return ""
+    s = material.strip().lower()
+    # Try exact lookup
+    if s in _MATERIAL_NORM:
+        return _MATERIAL_NORM[s]
+    # Try prefix match
+    for key, val in _MATERIAL_NORM.items():
+        if s.startswith(key) or key.startswith(s):
+            return val
+    # Fallback: basic normalize
+    return re.sub(r"\s+", "_", s).strip("_")
+
 # ---- Metric bolt pattern ----
 BOLT_PATTERN = (re.compile(r"\bm(\d+)\s*x\s*(\d+)", re.I), r"metric_bolt_M\1x\2")
 
@@ -116,6 +182,65 @@ def _extract_qty(row, cmap):
     m = re.search(r"(\d+(?:\.\d+)?)", str(row.get(k, "1")))
     return max(1, int(float(m.group(1)))) if m else 1
 
+
+# ---- MPN Normalization ----
+def normalize_mpn(mpn: str) -> str:
+    """Normalize MPN: strip whitespace/hyphens, uppercase. Preserves alphanumeric structure."""
+    if not mpn or not mpn.strip():
+        return ""
+    s = mpn.strip()
+    # Remove common wrapping chars
+    s = re.sub(r"^['\"\s]+|['\"\s]+$", "", s)
+    # Uppercase
+    s = s.upper()
+    # Collapse internal whitespace but preserve hyphens (some MPNs use them)
+    s = re.sub(r"\s+", "", s)
+    return s
+
+
+# ---- Manufacturer / Supplier Name Normalization ----
+_MANUFACTURER_ALIASES = {
+    "ti": "texas instruments", "t.i.": "texas instruments", "texas inst": "texas instruments",
+    "stm": "stmicroelectronics", "st micro": "stmicroelectronics", "st ": "stmicroelectronics",
+    "adi": "analog devices", "analog dev": "analog devices",
+    "nxp semi": "nxp", "nxp semiconductors": "nxp",
+    "te conn": "te connectivity", "tyco": "te connectivity",
+    "avx corp": "avx", "kyocera avx": "avx",
+    "tdk corp": "tdk", "tdk corporation": "tdk",
+    "murata mfg": "murata", "murata manufacturing": "murata",
+    "yageo corp": "yageo", "yageo corporation": "yageo",
+    "vishay": "vishay", "vishay intertechnology": "vishay",
+    "samsung electro": "samsung", "samsung electro-mechanics": "samsung",
+    "panasonic corp": "panasonic", "panasonic electronic": "panasonic",
+    "molex inc": "molex", "molex llc": "molex",
+    "amphenol corp": "amphenol", "amphenol corporation": "amphenol",
+    "phoenix con": "phoenix contact",
+    "wurth elek": "wurth", "wurth elektronik": "wurth",
+    "mcmaster carr": "mcmaster", "mcmaster-carr": "mcmaster",
+    "misumi corp": "misumi",
+    "abb ltd": "abb", "abb group": "abb",
+    "schneider elec": "schneider", "schneider electric": "schneider",
+    "siemens ag": "siemens",
+    "bosch gmbh": "bosch", "robert bosch": "bosch",
+    "skf group": "skf", "skf ab": "skf",
+}
+
+def normalize_manufacturer(name: str) -> str:
+    """Normalize manufacturer name: lowercase, trim, resolve known aliases."""
+    if not name or not name.strip():
+        return ""
+    s = name.strip()
+    sl = s.lower()
+    # Remove trailing legal suffixes
+    sl = re.sub(r"\s+(inc\.?|llc|ltd\.?|corp\.?|co\.?|gmbh|ag|plc|sa|nv|bv)\s*$", "", sl, flags=re.I)
+    sl = sl.strip()
+    # Check aliases
+    for alias, canonical in _MANUFACTURER_ALIASES.items():
+        if sl == alias or sl.startswith(alias):
+            return canonical
+    return sl
+
+
 def process_bom(file_path: str, user_location: str = "", target_currency: str = "USD", email: str = "") -> List[NormalizedBOMItem]:
     p = Path(file_path)
     if not p.exists(): raise FileNotFoundError(f"Not found: {file_path}")
@@ -132,15 +257,21 @@ def process_bom(file_path: str, user_location: str = "", target_currency: str = 
         pk = cmap.get("part_name", headers[0] if headers else "")
         raw = str(row.get(pk, "")).strip()
         if not raw: continue
-        mpn = str(row.get(cmap.get("mpn", ""), "")).strip()
-        mfr = str(row.get(cmap.get("manufacturer", ""), "")).strip()
+        mpn_raw = str(row.get(cmap.get("mpn", ""), "")).strip()
+        mfr_raw = str(row.get(cmap.get("manufacturer", ""), "")).strip()
         mat = str(row.get(cmap.get("material", ""), "")).strip()
         notes = str(row.get(cmap.get("notes", ""), "")).strip()
+        unit_raw = str(row.get(cmap.get("unit", ""), "")).strip()
         items.append(NormalizedBOMItem(
             item_id=f"BOM-{idx+1:04d}", raw_text=raw,
             standard_text=normalize_text(raw), quantity=_extract_qty(row, cmap),
-            description=normalize_text(raw), mpn=mpn, manufacturer=mfr, make=mfr,
-            material=normalize_text(mat), notes=notes,
+            description=normalize_text(raw),
+            mpn=normalize_mpn(mpn_raw),
+            manufacturer=normalize_manufacturer(mfr_raw),
+            make=normalize_manufacturer(mfr_raw),
+            material=normalize_material_name(mat) or normalize_text(mat),
+            notes=notes,
+            unit=normalize_unit(unit_raw),
             raw_row={str(k): str(v) for k, v in row.items()},
         ))
     return items

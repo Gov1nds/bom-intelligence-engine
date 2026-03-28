@@ -14,6 +14,23 @@ logger = logging.getLogger("ubne")
 
 USE_NEW_NORMALIZER = True
 
+# Import normalization functions from normalizer module
+try:
+    from engine.ingestion.normalizer import normalize_mpn as _normalize_mpn
+    from engine.ingestion.normalizer import normalize_manufacturer as _normalize_mfr
+    from engine.ingestion.normalizer import normalize_unit as _normalize_unit
+    from engine.ingestion.normalizer import normalize_material_name as _normalize_material
+except ImportError:
+    # Fallback if circular import
+    def _normalize_mpn(v):
+        return re.sub(r"\s+", "", str(v).strip().upper()) if v else ""
+    def _normalize_mfr(v):
+        return str(v).strip().lower() if v else ""
+    def _normalize_unit(v):
+        return str(v).strip().lower() if v else "each"
+    def _normalize_material(v):
+        return re.sub(r"\s+", "_", str(v).strip().lower()) if v else ""
+
 COLUMN_MAP: Dict[str, List[str]] = {
     "part_number": [
         "part number", "part no", "part no.", "part#", "part num", "pn", "p/n",
@@ -769,10 +786,11 @@ def ubne_process_bom(
             quantity=max(1, round(float(r.get("quantity", 1)), 2)),
             description=final_desc,
             part_number=final_pn,
-            mpn=final_pn,
-            manufacturer=r.get("manufacturer", "") or "",
-            make=r.get("manufacturer", "") or "",
-            material=r.get("material", "") or "",
+            mpn=_normalize_mpn(final_pn),
+            manufacturer=_normalize_mfr(r.get("manufacturer", "") or ""),
+            make=_normalize_mfr(r.get("manufacturer", "") or ""),
+            material=_normalize_material(r.get("material", "") or "") or (r.get("material", "") or ""),
+            unit=_normalize_unit(r.get("uom", "") or ""),
             notes=f"[Sheet: {ss}]" if ss else "",
             raw_row=raw_row_out,
         ))
