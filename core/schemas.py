@@ -10,6 +10,7 @@ class PartCategory(str, Enum):
     ELECTRICAL = "electrical"
     ELECTRONICS = "electronics"
     FASTENER = "fastener"
+    MACHINED = "machined"
     CUSTOM_MECHANICAL = "custom_mechanical"
     SHEET_METAL = "sheet_metal"
     RAW_MATERIAL = "raw_material"
@@ -19,6 +20,7 @@ class PartCategory(str, Enum):
 class ProcurementClass(str, Enum):
     CATALOG_PURCHASE = "catalog_purchase"
     RFQ_REQUIRED = "rfq_required"
+    MACHINED_PART = "machined_part"
     ENGINEERING_REVIEW = "engineering_review"
     RAW_STOCK = "raw_stock"
 

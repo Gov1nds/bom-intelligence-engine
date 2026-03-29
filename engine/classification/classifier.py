@@ -61,11 +61,27 @@ FASTENER_KW = {
 }
 
 CUSTOM_KW = {
-    "machined","cnc","milled","turned","fabricated","custom","bespoke",
+    "fabricated","custom","bespoke",
     "as_per_drawing","per_drawing","welded","assembled","fabrication",
     "bracket","housing","enclosure","fixture","jig","tooling","mold",
     "manifold","chassis","frame","weldment",
 }
+
+MACHINED_KW = {
+    "machined","cnc","milled","turned","lathe","boring",
+    "cnc_machined","cnc_milled","cnc_turned","precision_machined",
+    "shaft","bushing_custom","coupling","flange_custom","spindle",
+    "sleeve","adapter","spacer_custom","plug_custom","nozzle",
+    "collet","mandrel","arbor",
+}
+
+MACHINED_PAT = [
+    re.compile(r"\bmachined\s+\w+", re.I),
+    re.compile(r"\bcnc\s+(machined|milled|turned|part)", re.I),
+    re.compile(r"\bturned\s+\w+", re.I),
+    re.compile(r"\bmilled\s+\w+", re.I),
+    re.compile(r"\bprecision\s+\w+", re.I),
+]
 
 SHEET_METAL_KW = {
     "sheet_metal","laser_cut","laser_cutting","press_brake","stamped",
@@ -172,7 +188,11 @@ def _is_valid_mpn(mpn: str) -> bool:
 
 def _set_procurement_intent(c: ClassifiedItem) -> ClassifiedItem:
     """Set procurement_class, rfq_required, drawing_required based on category."""
-    if c.category in (PartCategory.CUSTOM_MECHANICAL, PartCategory.SHEET_METAL):
+    if c.category == PartCategory.MACHINED:
+        c.procurement_class = ProcurementClass.MACHINED_PART
+        c.rfq_required = True
+        c.drawing_required = True
+    elif c.category in (PartCategory.CUSTOM_MECHANICAL, PartCategory.SHEET_METAL):
         c.procurement_class = ProcurementClass.RFQ_REQUIRED
         c.rfq_required = True
         c.drawing_required = True
@@ -198,7 +218,21 @@ def classify_item(item: NormalizedBOMItem) -> ClassifiedItem:
     combined = f"{text} {item.mpn} {item.manufacturer} {item.material} {item.notes}".lower()
     c = ClassifiedItem(**{k: getattr(item, k) for k in item.__dataclass_fields__})
 
-    # ---- Rule 1: Custom fabrication → CUSTOM_MECHANICAL (checked FIRST) ----
+    # ---- Rule 1a: Machined parts → MACHINED (checked FIRST) ----
+    kw = _has_kw(combined, MACHINED_KW)
+    if kw or _has_pat(combined, MACHINED_PAT):
+        c.category = PartCategory.MACHINED
+        c.classification_path = ClassificationPath.PATH_3_3
+        c.is_custom = True
+        c.confidence = 0.85 if kw else 0.75
+        c.classification_reason = f"Machined: '{kw}'" if kw else "Machined pattern"
+        c.material_form = _material_form(combined)
+        c.geometry = _geometry(combined)
+        c.tolerance = _tolerance(combined)
+        c.secondary_ops = _secondary_ops(combined)
+        return _set_procurement_intent(c)
+
+    # ---- Rule 1b: Custom fabrication → CUSTOM_MECHANICAL ----
     kw = _has_kw(combined, CUSTOM_KW)
     if kw or _has_pat(combined, CUSTOM_PAT):
         c.category = PartCategory.CUSTOM_MECHANICAL
