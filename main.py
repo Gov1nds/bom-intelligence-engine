@@ -4,22 +4,44 @@ BOM Intelligence Engine — main.py (v3 — Pure Function Service)
 ONLY: Parse BOM → Classify → Extract Specs → Return JSON
 NO: Pricing, decisions, memory, reporting, external APIs
 """
-import sys, os, shutil, uuid, logging
-from pathlib import Path
-from datetime import datetime
 
-from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException
-from fastapi.responses import JSONResponse
+import asyncio
+import logging
+import os
+import shutil
+import sys
+import uuid
+from datetime import datetime
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 
 sys.path.insert(0, str(Path(__file__).parent))
+
 from engine.orchestrator import BOMIntelligenceEngine
 
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
 )
 
-INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "").strip()
+
+
+def verify_internal_key(x_internal_key: str = Header(default="")) -> None:
+    if not INTERNAL_API_KEY:
+        return
+
+    if not x_internal_key or x_internal_key.strip() != INTERNAL_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error_code": "INVALID_INTERNAL_KEY",
+                "message": "Unauthorized internal request",
+            },
+        )
+
 
 app = FastAPI(title="BOM Intelligence Engine", version="3.0.0")
 
@@ -33,13 +55,6 @@ app.add_middleware(
 
 Path("uploads").mkdir(exist_ok=True)
 engine = BOMIntelligenceEngine()
-
-
-def verify_internal_key(request: Request):
-    if INTERNAL_API_KEY:
-        key = request.headers.get("X-Internal-Key", "")
-        if key != INTERNAL_API_KEY:
-            raise HTTPException(403, "Invalid internal key")
 
 
 @app.get("/")
@@ -57,17 +72,41 @@ def health():
     return {"status": "ok", "ts": datetime.now().isoformat()}
 
 
-@app.post("/api/analyze-bom")
+@app.post("/api/analyze-bom", dependencies=[Depends(verify_internal_key)])
 async def analyze_bom(
     file: UploadFile = File(...),
     user_location: str = Form(""),
     target_currency: str = Form("USD"),
 ):
-    sp = Path("uploads") / f"{uuid.uuid4().hex[:8]}_{file.filename}"
-    with open(sp, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    file_path = None
     try:
-        result = engine.run_pipeline(str(sp), user_location, target_currency)
-        return JSONResponse(content=result)
+        file_name = file.filename or f"bom_{uuid.uuid4().hex}.bin"
+        safe_name = file_name.replace("/", "_").replace("\\", "_")
+        file_path = f"uploads/{uuid.uuid4()}_{safe_name}"
+
+        with open(file_path, "wb") as f:
+            f.write(await file.read())
+
+        result = await asyncio.to_thread(
+            engine.run_pipeline,
+            file_path,
+            user_location,
+            target_currency,
+        )
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error_code": "ENGINE_FAILED",
+                "message": str(e),
+            },
+        )
     finally:
-        sp.unlink(missing_ok=True)
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass

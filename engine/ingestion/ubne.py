@@ -679,6 +679,11 @@ def normalize_row(
         c = col_map.get(f)
         return row[c] if c and c in row else None
 
+    failure_metadata: Dict[str, Any] = {}
+    parse_status = "ok"
+    parse_reason_code = ""
+    parse_reason = ""
+
     pn = clean_part_number(_get("part_number"))
     raw_desc = clean_text(_get("description"))
     qty = parse_quantity(_get("quantity"))
@@ -705,6 +710,10 @@ def normalize_row(
 
         if best and len(best) > 2:
             raw_desc = best
+            parse_status = "fallback"
+            parse_reason_code = "DESC_FALLBACK_FROM_GENERIC_COLUMN"
+            parse_reason = f"Used best free-text cell '{best[:80]}' as description"
+            failure_metadata["description_source"] = "generic_best_cell"
         else:
             vals = [str(v).strip() for v in row.values() if v is not None and str(v).strip()]
             fb = " | ".join(vals) if vals else f"UNMAPPED_{sheet_name}_{row_index}"
@@ -712,9 +721,14 @@ def normalize_row(
                 nd = normalize_description(fb)
             except Exception:
                 nd = fb
+
             sq = qty if qty and qty > 0 else 1.0
             if sq > _QTY_SANITY_MAX:
                 sq = 1.0
+                parse_status = "fallback"
+                parse_reason_code = "QTY_SANITY_RESET"
+                parse_reason = "Quantity exceeded sanity max and was reset to 1"
+                failure_metadata["quantity_reset"] = True
 
             out = {
                 "part_number": str(pn or ""),
@@ -728,28 +742,36 @@ def normalize_row(
                 "material": str(mat or ""),
                 "category": str(cat or ""),
                 "source_sheet": sheet_name,
-                "source_sheets": [sheet_name],
                 "row_index": row_index,
                 "source_rows": [row_index],
+                "source_sheets": [sheet_name],
                 "duplicate_count": 1,
-                "dedup_key": _dedup_key({
-                    "part_number": pn,
-                    "manufacturer": mfr,
-                    "material": mat,
-                    "category": cat,
-                    "normalized_description": nd,
-                }),
+                "dedup_key": f"{str(pn or '').strip().lower()}|{nd.strip().lower()}|{str(mfr or '').strip().lower()}|{str(mat or '').strip().lower()}",
+                "group_key": f"{str(pn or '').strip().lower()}|{nd.strip().lower()}",
+                "parse_status": parse_status,
+                "parse_reason_code": parse_reason_code,
+                "parse_reason": parse_reason,
+                "failure_metadata": failure_metadata,
             }
-            out["group_key"] = out["dedup_key"]
             return out
 
     nd = normalize_description(raw_desc) if raw_desc else ""
     if not nd and pn:
         nd = normalize_description(str(pn))
+
     if not qty or qty <= 0:
         qty = 1.0
+        parse_status = "fallback"
+        parse_reason_code = "QTY_DEFAULTED"
+        parse_reason = "Missing or invalid quantity defaulted to 1"
+        failure_metadata["quantity_defaulted"] = True
+
     if qty > _QTY_SANITY_MAX:
         qty = 1.0
+        parse_status = "fallback"
+        parse_reason_code = "QTY_SANITY_RESET"
+        parse_reason = "Quantity exceeded sanity max and was reset to 1"
+        failure_metadata["quantity_reset"] = True
 
     out = {
         "part_number": pn,
@@ -763,20 +785,52 @@ def normalize_row(
         "material": mat,
         "category": cat,
         "source_sheet": sheet_name,
-        "source_sheets": [sheet_name],
         "row_index": row_index,
         "source_rows": [row_index],
+        "source_sheets": [sheet_name],
         "duplicate_count": 1,
-        "dedup_key": _dedup_key({
-            "part_number": pn,
-            "manufacturer": mfr,
-            "material": mat,
-            "category": cat,
-            "normalized_description": nd,
-        }),
+        "dedup_key": f"{str(pn or '').strip().lower()}|{nd.strip().lower()}|{str(mfr or '').strip().lower()}|{str(mat or '').strip().lower()}",
+        "group_key": f"{str(pn or '').strip().lower()}|{nd.strip().lower()}",
+        "parse_status": parse_status,
+        "parse_reason_code": parse_reason_code,
+        "parse_reason": parse_reason,
+        "failure_metadata": failure_metadata,
     }
-    out["group_key"] = out["dedup_key"]
     return out
+
+def _dedup_key(row: Dict[str, Any]) -> str:
+    pn = _normalize_mpn(row.get("part_number") or row.get("mpn") or "")
+    mfr = _normalize_mfr(row.get("manufacturer") or "")
+    cat = _normalize_header(row.get("category") or "")
+    mat = _normalize_material(row.get("material") or "")
+    desc = normalize_description(clean_text(row.get("normalized_description") or row.get("description") or "")).lower().strip()
+    return "|".join([pn, mfr, cat, mat, desc])
+
+
+def _merge_dedup_rows(base: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(base)
+
+    try:
+        merged["quantity"] = float(base.get("quantity", 1) or 1) + float(incoming.get("quantity", 1) or 1)
+    except Exception:
+        merged["quantity"] = base.get("quantity", 1)
+
+    merged["duplicate_count"] = int(base.get("duplicate_count", 1) or 1) + int(incoming.get("duplicate_count", 1) or 1)
+
+    sr = list(dict.fromkeys((base.get("source_rows") or []) + (incoming.get("source_rows") or [])))
+    ss = list(dict.fromkeys((base.get("source_sheets") or []) + (incoming.get("source_sheets") or [])))
+    merged["source_rows"] = sr
+    merged["source_sheets"] = ss
+
+    if len(str(incoming.get("description", ""))) > len(str(base.get("description", ""))):
+        merged["description"] = incoming.get("description", merged.get("description"))
+    if len(str(incoming.get("raw_description", ""))) > len(str(base.get("raw_description", ""))):
+        merged["raw_description"] = incoming.get("raw_description", merged.get("raw_description"))
+
+    merged["dedup_key"] = base.get("dedup_key") or incoming.get("dedup_key") or _dedup_key(merged)
+    merged["group_key"] = merged["dedup_key"]
+    return merged
+
 
 def deduplicate(rows: List[Dict]) -> List[Dict]:
     if not rows:
@@ -798,10 +852,8 @@ def deduplicate(rows: List[Dict]) -> List[Dict]:
 
         merged[key] = _merge_dedup_rows(merged[key], r)
 
-    out = list(merged.values())
-    logger.info(f"Dedup: {len(rows)} → {len(out)}")
-    return out
-
+    logger.info(f"Dedup: {len(rows)} → {len(merged)}")
+    return list(merged.values())
 
 # ── Main pipeline ──
 
@@ -914,6 +966,14 @@ def ubne_process_bom(
             source_sheet=ss,
             source_row=idx + 1,
             raw_row=raw_row_out,
+            parse_status=r.get("parse_status", "ok"),
+            parse_reason_code=r.get("parse_reason_code", ""),
+            parse_reason=r.get("parse_reason", ""),
+            failure_metadata=r.get("failure_metadata", {}),
+            dedup_key=r.get("dedup_key", ""),
+            duplicate_count=r.get("duplicate_count", 1),
+            source_rows=r.get("source_rows", []),
+            source_sheets=r.get("source_sheets", []),
         ))
 
     warn_count = len([i for i in items if not i.description and not i.part_number])

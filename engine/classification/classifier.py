@@ -465,10 +465,13 @@ def classify_item(item: NormalizedBOMItem) -> ClassifiedItem:
         return _set_procurement_intent(c)
 
     # ---- Rule 15: Unknown fallback ----
+
     c.category = PartCategory.UNKNOWN
     c.classification_path = ClassificationPath.PATH_3_1
     c.confidence = 0.30
     c.classification_reason = "Fallback: no signals — needs review"
+    c.failure_reason_code = "NO_CLASSIFICATION_SIGNAL"
+    c.failure_reason = "No category, MPN, brand, material, or keyword signal found"
     return _set_procurement_intent(c)
 
 def classify_bom(items):

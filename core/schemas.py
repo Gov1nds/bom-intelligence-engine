@@ -63,6 +63,10 @@ class ToleranceClass(str, Enum):
     LOOSE = "loose"; STANDARD = "standard"; PRECISION = "precision"; ULTRA = "ultra"
 
 
+# =========================
+# 📦 NORMALIZED ITEM
+# =========================
+
 @dataclass
 class NormalizedBOMItem:
     item_id: str = ""
@@ -83,6 +87,22 @@ class NormalizedBOMItem:
     reference_ids: List[str] = field(default_factory=list)
     raw_row: Dict[str, Any] = field(default_factory=dict)
 
+    # 🔥 NEW: Parsing diagnostics
+    parse_status: str = "ok"
+    parse_reason_code: str = ""
+    parse_reason: str = ""
+    failure_metadata: Dict[str, Any] = field(default_factory=dict)
+
+    # 🔥 NEW: Dedup tracking
+    dedup_key: str = ""
+    duplicate_count: int = 1
+    source_rows: List[int] = field(default_factory=list)
+    source_sheets: List[str] = field(default_factory=list)
+
+
+# =========================
+# 🧠 CLASSIFIED ITEM
+# =========================
 
 @dataclass
 class ClassifiedItem(NormalizedBOMItem):
@@ -90,16 +110,20 @@ class ClassifiedItem(NormalizedBOMItem):
     classification_path: ClassificationPath = ClassificationPath.PATH_3_1
     confidence: float = 0.0
     classification_reason: str = ""
+    classification_reason_code: str = ""  # 🔥 NEW
+
     has_mpn: bool = False
     has_brand: bool = False
     is_generic: bool = False
     is_raw: bool = False
     is_custom: bool = False
+
     material_form: Optional[MaterialForm] = None
     geometry: Optional[GeometryComplexity] = None
     tolerance: Optional[ToleranceClass] = None
     secondary_ops: List[str] = field(default_factory=list)
-    # --- NEW procurement intent fields ---
+
+    # --- Procurement intent ---
     procurement_class: ProcurementClass = ProcurementClass.CATALOG_PURCHASE
     rfq_required: bool = False
     drawing_required: bool = False
