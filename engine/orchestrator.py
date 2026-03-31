@@ -154,6 +154,12 @@ class BOMIntelligenceEngine:
                 "matched_master_id": None,  # Populated by platform-api resolver
                 # Specs
                 "specs": specs_data.get(ci.item_id, {}),
+                                "source_sheet": ci.source_sheet if hasattr(ci, "source_sheet") else "",
+                "source_row": ci.source_row if hasattr(ci, "source_row") else 0,
+                "dedup_key": ci.raw_row.get("dedup_key", "") if getattr(ci, "raw_row", None) else "",
+                "duplicate_count": ci.raw_row.get("duplicate_count", 1) if getattr(ci, "raw_row", None) else 1,
+                "source_rows": ci.raw_row.get("source_rows", []) if getattr(ci, "raw_row", None) else [],
+                "source_sheets": ci.raw_row.get("source_sheets", []) if getattr(ci, "raw_row", None) else [],
             }
             components.append(comp)
 

@@ -10,6 +10,13 @@ class PartCategory(str, Enum):
     ELECTRICAL = "electrical"
     ELECTRONICS = "electronics"
     FASTENER = "fastener"
+
+    PNEUMATIC = "pneumatic"
+    HYDRAULIC = "hydraulic"
+    CABLE_WIRING = "cable_wiring"
+    OPTICAL = "optical"
+    THERMAL = "thermal"
+
     MACHINED = "machined"
     CUSTOM_MECHANICAL = "custom_mechanical"
     SHEET_METAL = "sheet_metal"

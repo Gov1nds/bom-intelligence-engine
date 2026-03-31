@@ -120,7 +120,30 @@ RAW_PAT = [
     re.compile(r"\b(steel|aluminum|copper|brass|bronze)\s+(bar|rod|tube|pipe|sheet|plate|billet)\b", re.I),
     re.compile(r"\b(round|square|hex|flat)\s+(bar|stock)\b", re.I),
 ]
+PNEUMATIC_KW = {
+    "pneumatic", "air valve", "solenoid valve", "cylinder", "actuator",
+    "air hose", "regulator", "compressor", "manifold", "fitting", "vacuum",
+}
 
+HYDRAULIC_KW = {
+    "hydraulic", "hydraulic hose", "oil hose", "pump", "seal", "manifold",
+    "valve", "cylinder", "pressure line", "fitting", "reservoir",
+}
+
+CABLE_WIRING_KW = {
+    "cable", "wire", "wiring", "harness", "loom", "shielded", "awg",
+    "twisted pair", "coax", "connector cable", "patch cord", "jumper",
+}
+
+OPTICAL_KW = {
+    "optical", "fiber", "fibre", "fiber optic", "fibre optic", "lens",
+    "photodiode", "laser diode", "transceiver", "optics", "waveguide",
+}
+
+THERMAL_KW = {
+    "thermal", "heatsink", "heat sink", "heat-sink", "thermal pad",
+    "thermal interface", "cooling", "fan", "blower", "radiator", "peltier",
+}
 STANDARD_KW = {
     "gear","sprocket","pulley",
 }
@@ -171,6 +194,19 @@ def _has_kw(text: str, keywords: Set[str]) -> Optional[str]:
 
 def _has_pat(text: str, patterns: list) -> bool:
     return any(p.search(text) for p in patterns)
+
+def _domain_category(text: str):
+    for category, keywords in [
+        (PartCategory.PNEUMATIC, PNEUMATIC_KW),
+        (PartCategory.HYDRAULIC, HYDRAULIC_KW),
+        (PartCategory.CABLE_WIRING, CABLE_WIRING_KW),
+        (PartCategory.OPTICAL, OPTICAL_KW),
+        (PartCategory.THERMAL, THERMAL_KW),
+    ]:
+        kw = _has_kw(text, keywords)
+        if kw:
+            return category, kw
+    return None, None
 
 def _is_valid_mpn(mpn: str) -> bool:
     """Validate MPN against known part number formats. Rejects drawing numbers and short codes."""
@@ -271,7 +307,7 @@ def classify_item(item: NormalizedBOMItem) -> ClassifiedItem:
         c.material_form = _material_form(combined)
         return _set_procurement_intent(c)
 
-    # ---- Rule 4: MPN or Brand → ELECTRICAL / ELECTRONICS / STANDARD ----
+        # ---- Rule 4: MPN or Brand ----
     has_mpn = _is_valid_mpn(item.mpn)
     if has_mpn:
         c.has_mpn = True
@@ -285,8 +321,17 @@ def classify_item(item: NormalizedBOMItem) -> ClassifiedItem:
                 break
     c.has_brand = has_brand
 
+    # Domain override first — these must not be swallowed by generic electronics / standard
+    dom_cat, dom_kw = _domain_category(combined)
+    if dom_cat:
+        c.category = dom_cat
+        c.classification_path = ClassificationPath.PATH_3_1
+        c.is_generic = True
+        c.confidence = 0.82 if (c.has_mpn or has_brand) else 0.78
+        c.classification_reason = f"{dom_cat.value.title()}: '{dom_kw}'"
+        return _set_procurement_intent(c)
+
     if c.has_mpn or has_brand:
-        # Determine sub-category based on keywords
         elec_kw = _has_kw(combined, ELECTRICAL_KW)
         elect_kw = _has_kw(combined, ELECTRONICS_KW)
         fast_kw = _has_kw(combined, FASTENER_KW)
@@ -298,7 +343,6 @@ def classify_item(item: NormalizedBOMItem) -> ClassifiedItem:
         elif fast_kw:
             c.category = PartCategory.FASTENER
         else:
-            # Default branded/MPN items to ELECTRONICS if brand is electronic
             c.category = PartCategory.ELECTRONICS if has_brand else PartCategory.STANDARD
 
         c.classification_path = ClassificationPath.PATH_3_1
@@ -306,7 +350,7 @@ def classify_item(item: NormalizedBOMItem) -> ClassifiedItem:
         c.classification_reason = f"MPN={'Y' if c.has_mpn else 'N'}, Brand={'Y' if has_brand else 'N'}"
         return _set_procurement_intent(c)
 
-    # ---- Rule 5: Fastener keywords → FASTENER ----
+    # ---- Rule 5: Fastener keywords ----
     kw = _has_kw(combined, FASTENER_KW)
     if kw:
         c.category = PartCategory.FASTENER
@@ -316,7 +360,57 @@ def classify_item(item: NormalizedBOMItem) -> ClassifiedItem:
         c.classification_reason = f"Fastener: '{kw}'"
         return _set_procurement_intent(c)
 
-    # ---- Rule 6: Electrical keywords → ELECTRICAL ----
+    # ---- Rule 6: Pneumatic ----
+    kw = _has_kw(combined, PNEUMATIC_KW)
+    if kw:
+        c.category = PartCategory.PNEUMATIC
+        c.classification_path = ClassificationPath.PATH_3_1
+        c.is_generic = True
+        c.confidence = 0.80
+        c.classification_reason = f"Pneumatic: '{kw}'"
+        return _set_procurement_intent(c)
+
+    # ---- Rule 7: Hydraulic ----
+    kw = _has_kw(combined, HYDRAULIC_KW)
+    if kw:
+        c.category = PartCategory.HYDRAULIC
+        c.classification_path = ClassificationPath.PATH_3_1
+        c.is_generic = True
+        c.confidence = 0.80
+        c.classification_reason = f"Hydraulic: '{kw}'"
+        return _set_procurement_intent(c)
+
+    # ---- Rule 8: Cable / wiring ----
+    kw = _has_kw(combined, CABLE_WIRING_KW)
+    if kw:
+        c.category = PartCategory.CABLE_WIRING
+        c.classification_path = ClassificationPath.PATH_3_1
+        c.is_generic = True
+        c.confidence = 0.80
+        c.classification_reason = f"Cable/wiring: '{kw}'"
+        return _set_procurement_intent(c)
+
+    # ---- Rule 9: Optical ----
+    kw = _has_kw(combined, OPTICAL_KW)
+    if kw:
+        c.category = PartCategory.OPTICAL
+        c.classification_path = ClassificationPath.PATH_3_1
+        c.is_generic = True
+        c.confidence = 0.80
+        c.classification_reason = f"Optical: '{kw}'"
+        return _set_procurement_intent(c)
+
+    # ---- Rule 10: Thermal ----
+    kw = _has_kw(combined, THERMAL_KW)
+    if kw:
+        c.category = PartCategory.THERMAL
+        c.classification_path = ClassificationPath.PATH_3_1
+        c.is_generic = True
+        c.confidence = 0.80
+        c.classification_reason = f"Thermal: '{kw}'"
+        return _set_procurement_intent(c)
+
+    # ---- Rule 11: Electrical keywords ----
     kw = _has_kw(text, ELECTRICAL_KW)
     if kw:
         c.category = PartCategory.ELECTRICAL
@@ -326,7 +420,7 @@ def classify_item(item: NormalizedBOMItem) -> ClassifiedItem:
         c.classification_reason = f"Electrical: '{kw}'"
         return _set_procurement_intent(c)
 
-    # ---- Rule 7: Electronics keywords → ELECTRONICS ----
+    # ---- Rule 12: Electronics keywords ----
     kw = _has_kw(text, ELECTRONICS_KW)
     if kw:
         c.category = PartCategory.ELECTRONICS
@@ -336,7 +430,7 @@ def classify_item(item: NormalizedBOMItem) -> ClassifiedItem:
         c.classification_reason = f"Electronics: '{kw}'"
         return _set_procurement_intent(c)
 
-    # ---- Rule 8: Generic standard keywords → STANDARD ----
+    # ---- Rule 13: Generic standard keywords ----
     kw = _has_kw(text, STANDARD_KW)
     if kw:
         c.category = PartCategory.STANDARD
@@ -346,10 +440,7 @@ def classify_item(item: NormalizedBOMItem) -> ClassifiedItem:
         c.classification_reason = f"Standard: '{kw}'"
         return _set_procurement_intent(c)
 
-    # ---- Rule 9: Has material field — check if raw material or needs review ----
-    # FIXED: no longer classifies material-only items as custom by default.
-    # If raw material signals detected → RAW_MATERIAL
-    # Otherwise → ENGINEERING_REVIEW (not custom_mechanical)
+    # ---- Rule 14: Material-only fallback ----
     if item.material.strip():
         mat_lower = item.material.strip().lower()
         mat_combined = f"{text} {mat_lower}"
@@ -364,20 +455,18 @@ def classify_item(item: NormalizedBOMItem) -> ClassifiedItem:
             c.material_form = _material_form(mat_combined)
             return _set_procurement_intent(c)
 
-        # Material specified but no raw/custom/standard signals → needs review
         c.category = PartCategory.UNKNOWN
         c.classification_path = ClassificationPath.PATH_3_1
         c.confidence = 0.35
-        c.classification_reason = f"Material '{item.material.strip()[:30]}' specified but no classification signals — needs review"
+        c.classification_reason = (
+            f"Material '{item.material.strip()[:30]}' specified but no classification signals — needs review"
+        )
         c.material_form = _material_form(combined)
         return _set_procurement_intent(c)
 
-    # ---- Rule 10: Unknown fallback → UNKNOWN (NOT standard) ----
+    # ---- Rule 15: Unknown fallback ----
     c.category = PartCategory.UNKNOWN
     c.classification_path = ClassificationPath.PATH_3_1
     c.confidence = 0.30
     c.classification_reason = "Fallback: no signals — needs review"
     return _set_procurement_intent(c)
-
-def classify_bom(items: List[NormalizedBOMItem]) -> List[ClassifiedItem]:
-    return [classify_item(i) for i in items]

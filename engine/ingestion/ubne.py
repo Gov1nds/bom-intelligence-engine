@@ -153,6 +153,70 @@ def _avg_text_len(rows: List[Dict], col: str, n: int = 20) -> float:
             c += 1
     return tl / max(c, 1)
 
+def _text_key(value: Any) -> str:
+    return normalize_description(clean_text(value)).lower().strip()
+
+def _row_specificity_score(row: Dict[str, Any]) -> float:
+    score = 0.0
+    if row.get("part_number"):
+        score += 5.0
+    if row.get("mpn"):
+        score += 5.0
+    if row.get("manufacturer"):
+        score += 1.0
+    if row.get("supplier"):
+        score += 0.5
+    if row.get("material"):
+        score += 1.0
+    if row.get("category"):
+        score += 1.0
+    desc = str(row.get("normalized_description") or row.get("description") or "")
+    score += min(len(desc) / 20.0, 3.0)
+    return score
+
+def _dedup_key(row: Dict[str, Any]) -> str:
+    pn = _normalize_mpn(row.get("part_number") or row.get("mpn") or "")
+    mfr = _normalize_mfr(row.get("manufacturer") or "")
+    cat = _normalize_header(row.get("category") or "")
+    mat = _normalize_material(row.get("material") or "")
+    desc = _text_key(row.get("normalized_description") or row.get("description") or "")
+    return "|".join([pn, mfr, cat, mat, desc])
+
+def _merge_dedup_rows(base: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(base)
+
+    try:
+        merged["quantity"] = float(base.get("quantity", 1) or 1) + float(incoming.get("quantity", 1) or 1)
+    except Exception:
+        merged["quantity"] = base.get("quantity", 1)
+
+    base_dup = int(base.get("duplicate_count", 1) or 1)
+    inc_dup = int(incoming.get("duplicate_count", 1) or 1)
+    merged["duplicate_count"] = base_dup + inc_dup
+
+    source_rows = list(base.get("source_rows") or [])
+    source_rows.extend(list(incoming.get("source_rows") or []))
+    if incoming.get("row_index") is not None:
+        source_rows.append(incoming.get("row_index"))
+    merged["source_rows"] = list(dict.fromkeys(source_rows))
+
+    source_sheets = list(base.get("source_sheets") or [])
+    source_sheets.extend(list(incoming.get("source_sheets") or []))
+    if incoming.get("source_sheet"):
+        source_sheets.append(incoming.get("source_sheet"))
+    merged["source_sheets"] = list(dict.fromkeys(source_sheets))
+
+    if _row_specificity_score(incoming) > _row_specificity_score(merged):
+        for field in [
+            "part_number", "raw_description", "description", "normalized_description",
+            "manufacturer", "supplier", "material", "category", "uom",
+        ]:
+            if incoming.get(field):
+                merged[field] = incoming.get(field)
+
+    merged["dedup_key"] = base.get("dedup_key") or incoming.get("dedup_key") or _dedup_key(merged)
+    merged["group_key"] = merged["dedup_key"]
+    return merged
 
 class ColumnMapper:
     FUZZY_THRESHOLD = 0.72
@@ -619,7 +683,7 @@ def normalize_row(
     raw_desc = clean_text(_get("description"))
     qty = parse_quantity(_get("quantity"))
     mfr = clean_manufacturer(_get("manufacturer"))
-    supplier = clean_manufacturer(_get("supplier"))  # Separate supplier field
+    supplier = clean_manufacturer(_get("supplier"))
     mat = clean_text(_get("material"))
     cat = clean_text(_get("category")) or None
     uom = (uom_map or {}).get("quantity")
@@ -638,6 +702,7 @@ def normalize_row(
                 pass
             if len(vs) > len(best):
                 best = vs
+
         if best and len(best) > 2:
             raw_desc = best
         else:
@@ -650,7 +715,8 @@ def normalize_row(
             sq = qty if qty and qty > 0 else 1.0
             if sq > _QTY_SANITY_MAX:
                 sq = 1.0
-            return {
+
+            out = {
                 "part_number": str(pn or ""),
                 "raw_description": fb,
                 "description": fb,
@@ -658,12 +724,24 @@ def normalize_row(
                 "quantity": sq,
                 "uom": str(uom or ""),
                 "manufacturer": str(mfr or ""),
+                "supplier": str(supplier or ""),
                 "material": str(mat or ""),
                 "category": str(cat or ""),
                 "source_sheet": sheet_name,
+                "source_sheets": [sheet_name],
                 "row_index": row_index,
-                "group_key": f"{str(pn or '')}_{fb}".strip("_").lower(),
+                "source_rows": [row_index],
+                "duplicate_count": 1,
+                "dedup_key": _dedup_key({
+                    "part_number": pn,
+                    "manufacturer": mfr,
+                    "material": mat,
+                    "category": cat,
+                    "normalized_description": nd,
+                }),
             }
+            out["group_key"] = out["dedup_key"]
+            return out
 
     nd = normalize_description(raw_desc) if raw_desc else ""
     if not nd and pn:
@@ -673,7 +751,7 @@ def normalize_row(
     if qty > _QTY_SANITY_MAX:
         qty = 1.0
 
-    return {
+    out = {
         "part_number": pn,
         "raw_description": raw_desc,
         "description": raw_desc or nd,
@@ -685,14 +763,44 @@ def normalize_row(
         "material": mat,
         "category": cat,
         "source_sheet": sheet_name,
+        "source_sheets": [sheet_name],
         "row_index": row_index,
-        "group_key": f"{pn or ''}_{nd or ''}".strip("_").lower(),
+        "source_rows": [row_index],
+        "duplicate_count": 1,
+        "dedup_key": _dedup_key({
+            "part_number": pn,
+            "manufacturer": mfr,
+            "material": mat,
+            "category": cat,
+            "normalized_description": nd,
+        }),
     }
-
+    out["group_key"] = out["dedup_key"]
+    return out
 
 def deduplicate(rows: List[Dict]) -> List[Dict]:
-    logger.info(f"Dedup: {len(rows)} → {len(rows)} (pass-through)")
-    return rows
+    if not rows:
+        return rows
+
+    merged: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        key = r.get("dedup_key") or _dedup_key(r)
+        r["dedup_key"] = key
+        r["group_key"] = key
+
+        if key not in merged:
+            first = dict(r)
+            first["duplicate_count"] = int(first.get("duplicate_count", 1) or 1)
+            first["source_rows"] = list(dict.fromkeys(first.get("source_rows") or [first.get("row_index")]))
+            first["source_sheets"] = list(dict.fromkeys(first.get("source_sheets") or [first.get("source_sheet")]))
+            merged[key] = first
+            continue
+
+        merged[key] = _merge_dedup_rows(merged[key], r)
+
+    out = list(merged.values())
+    logger.info(f"Dedup: {len(rows)} → {len(out)}")
+    return out
 
 
 # ── Main pipeline ──
