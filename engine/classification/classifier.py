@@ -307,7 +307,7 @@ def classify_item(item: NormalizedBOMItem) -> ClassifiedItem:
         c.material_form = _material_form(combined)
         return _set_procurement_intent(c)
 
-        # ---- Rule 4: MPN or Brand ----
+    # ---- Rule 4: MPN or Brand ----
     has_mpn = _is_valid_mpn(item.mpn)
     if has_mpn:
         c.has_mpn = True
@@ -470,3 +470,10 @@ def classify_item(item: NormalizedBOMItem) -> ClassifiedItem:
     c.confidence = 0.30
     c.classification_reason = "Fallback: no signals — needs review"
     return _set_procurement_intent(c)
+
+def classify_bom(items):
+    """
+    Wrapper to classify a list of BOM items.
+    REQUIRED for orchestrator import compatibility.
+    """
+    return [classify_item(item) for item in items]
