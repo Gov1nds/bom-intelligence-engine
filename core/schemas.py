@@ -18,6 +18,7 @@ class PartCategory(str, Enum):
     THERMAL = "thermal"
 
     MACHINED = "machined"
+    CUSTOM = "custom"
     CUSTOM_MECHANICAL = "custom_mechanical"
     SHEET_METAL = "sheet_metal"
     RAW_MATERIAL = "raw_material"

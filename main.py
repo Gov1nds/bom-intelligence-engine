@@ -112,9 +112,16 @@ async def _run_pipeline_async(
 
 app = FastAPI(title="BOM Intelligence Engine", version="3.0.0")
 
+# M-4: Restrict CORS to Platform API internal origins only.
+# This engine is an internal microservice — not directly called by browsers.
+_engine_cors_origins = [
+    o.strip()
+    for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:8000,http://localhost:3000").split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_engine_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
