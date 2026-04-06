@@ -1,130 +1,42 @@
-"""Core data schemas — ingestion + classification only."""
-from __future__ import annotations
-from typing import List, Dict, Optional, Any
-from dataclasses import dataclass, field
 from enum import Enum
 
 
 class PartCategory(str, Enum):
-    STANDARD = "standard"
-    ELECTRICAL = "electrical"
-    ELECTRONICS = "electronics"
-    FASTENER = "fastener"
-
-    PNEUMATIC = "pneumatic"
-    HYDRAULIC = "hydraulic"
-    CABLE_WIRING = "cable_wiring"
-    OPTICAL = "optical"
-    THERMAL = "thermal"
-
-    MACHINED = "machined"
-    CUSTOM = "custom"
-    CUSTOM_MECHANICAL = "custom_mechanical"
-    SHEET_METAL = "sheet_metal"
-    RAW_MATERIAL = "raw_material"
-    UNKNOWN = "unknown"
+    fastener = "fastener"
+    electrical = "electrical"
+    electronics = "electronics"
+    mechanical = "mechanical"
+    raw_material = "raw_material"
+    sheet_metal = "sheet_metal"
+    machined = "machined"
+    custom_mechanical = "custom_mechanical"
+    pneumatic = "pneumatic"
+    hydraulic = "hydraulic"
+    optical = "optical"
+    thermal = "thermal"
+    cable_wiring = "cable_wiring"
+    standard = "standard"
+    unknown = "unknown"
 
 
 class ProcurementClass(str, Enum):
-    CATALOG_PURCHASE = "catalog_purchase"
-    RFQ_REQUIRED = "rfq_required"
-    MACHINED_PART = "machined_part"
-    ENGINEERING_REVIEW = "engineering_review"
-    RAW_STOCK = "raw_stock"
-
-
-class ClassificationPath(str, Enum):
-    PATH_3_1 = "3_1"
-    PATH_3_2 = "3_2"
-    PATH_3_3 = "3_3"
-
-
-class ManufacturingProcess(str, Enum):
-    CNC_3AXIS = "cnc_3axis"; CNC_5AXIS = "cnc_5axis"; CNC_TURNING = "cnc_turning"
-    LASER_CUTTING = "laser_cutting"; WATERJET = "waterjet"; PLASMA = "plasma"
-    PRESS_BRAKE = "press_brake"; STAMPING = "stamping"
-    DIE_CASTING = "die_casting"; INJECTION_MOLDING = "injection_molding"
-    SLS = "sls"; DMLS = "dmls"; SLA = "sla"
-    EDM = "edm"; GRINDING = "grinding"; HONING = "honing"
-    WELDING = "welding"; THREADING = "threading"
-    SURFACE_COATING = "surface_coating"; HEAT_TREATMENT = "heat_treatment"
-    FORGING = "forging"; CASTING = "casting"
+    catalog_purchase = "catalog_purchase"
+    custom_fabrication = "custom_fabrication"
+    raw_material_order = "raw_material_order"
+    subassembly = "subassembly"
+    unknown = "unknown"
 
 
 class MaterialForm(str, Enum):
-    SHEET = "sheet"; BILLET = "billet"; BAR = "bar"; TUBE = "tube"
-    COMPOSITE = "composite"; POLYMER = "polymer"
-
-
-class GeometryComplexity(str, Enum):
-    FLAT_2D = "2d"; PRISMATIC = "2.5d"; FULL_3D = "3d"; MULTI_AXIS = "multi_axis"
-
-
-class ToleranceClass(str, Enum):
-    LOOSE = "loose"; STANDARD = "standard"; PRECISION = "precision"; ULTRA = "ultra"
-
-
-# =========================
-# 📦 NORMALIZED ITEM
-# =========================
-
-@dataclass
-class NormalizedBOMItem:
-    item_id: str = ""
-    raw_text: str = ""
-    standard_text: str = ""
-    quantity: int = 1
-    description: str = ""
-    part_number: str = ""
-    mpn: str = ""
-    manufacturer: str = ""
-    supplier_name: str = ""  # Separate from manufacturer
-    make: str = ""
-    material: str = ""
-    notes: str = ""
-    unit: str = "each"
-    source_sheet: str = ""
-    source_row: int = 0
-    reference_ids: List[str] = field(default_factory=list)
-    raw_row: Dict[str, Any] = field(default_factory=dict)
-
-    # 🔥 NEW: Parsing diagnostics
-    parse_status: str = "ok"
-    parse_reason_code: str = ""
-    parse_reason: str = ""
-    failure_metadata: Dict[str, Any] = field(default_factory=dict)
-
-    # 🔥 NEW: Dedup tracking
-    dedup_key: str = ""
-    duplicate_count: int = 1
-    source_rows: List[int] = field(default_factory=list)
-    source_sheets: List[str] = field(default_factory=list)
-
-
-# =========================
-# 🧠 CLASSIFIED ITEM
-# =========================
-
-@dataclass
-class ClassifiedItem(NormalizedBOMItem):
-    category: PartCategory = PartCategory.UNKNOWN
-    classification_path: ClassificationPath = ClassificationPath.PATH_3_1
-    confidence: float = 0.0
-    classification_reason: str = ""
-    classification_reason_code: str = ""  # 🔥 NEW
-
-    has_mpn: bool = False
-    has_brand: bool = False
-    is_generic: bool = False
-    is_raw: bool = False
-    is_custom: bool = False
-
-    material_form: Optional[MaterialForm] = None
-    geometry: Optional[GeometryComplexity] = None
-    tolerance: Optional[ToleranceClass] = None
-    secondary_ops: List[str] = field(default_factory=list)
-
-    # --- Procurement intent ---
-    procurement_class: ProcurementClass = ProcurementClass.CATALOG_PURCHASE
-    rfq_required: bool = False
-    drawing_required: bool = False
+    sheet = "sheet"
+    bar = "bar"
+    rod = "rod"
+    tube = "tube"
+    plate = "plate"
+    wire = "wire"
+    block = "block"
+    casting = "casting"
+    forging = "forging"
+    powder = "powder"
+    pellet = "pellet"
+    other = "other"
