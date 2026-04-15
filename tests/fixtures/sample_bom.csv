@@ -1,0 +1,11 @@
+description,quantity,part_number,manufacturer,material,unit,notes
+M8x25 Hex Bolt Grade 8.8,100,HB-M8-25,,Stainless Steel 304,each,Anodized
+10k 0805 Resistor ±5%,500,RC0805JR-0710KL,Yageo,,each,SMD
+Custom Aluminum Bracket 50x30x10mm,10,BRKT-001,,Aluminum 6061,each,CNC machined anodized
+M10 Hex Nut,200,HN-M10,,Carbon Steel,each,Zinc plated
+0.1uF Ceramic Capacitor 0603,1000,CC0603KRX7R9BB104,Yageo,,each,
+Stainless Steel 316 Rod 25mm dia x 500mm,5,,,,each,Raw material
+Cable Assembly 1m 4-pin,20,CA-001,,,,
+Pneumatic Air Cylinder 50mm bore,4,DSNU-50-100-P-A,Festo,,each,
+Custom Sheet Metal Enclosure,8,ENC-001,,Steel,each,Laser cut and formed
+Power Supply 24V 5A,12,LRS-120-24,Mean Well,,each,DIN rail mount

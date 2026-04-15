@@ -1,37 +1,71 @@
-"""BOM Intelligence Engine — Orchestrator pipeline."""
-import time
+"""BOM Intelligence Engine — Orchestrator pipeline.
+
+Provides:
+- normalize/enrich/score/strategy: decomposed per-line methods (new)
+- run_pipeline: legacy monolithic method (retained for /api/analyze-bom)
+"""
 import hashlib
 import logging
+import time
+import warnings
 from typing import Any
 
-from engine.ingestion.normalizer import ingest_file
+from core.canonical_key import generate_canonical_key
+from core.config import config
+from core.schemas import (
+    SCHEMA_VERSION, EnrichmentRequest, EnrichmentResponse,
+    NormalizationRequest, NormalizationResponse, PartCategory,
+    ScoringRequest, ScoringResponse, StrategyRequest, StrategyResponse,
+)
 from engine.classification.classifier import classify_bom
-from engine.specs.spec_extractor import extract_specs
+from engine.enrichment.pipeline import enrich_bom_line
 from engine.estimation.cost_estimator import estimate_cost
 from engine.estimation.lead_time_risk import estimate_lead_time, estimate_risk
-from core.schemas import PartCategory
+from engine.ingestion.normalizer import ingest_file
+from engine.normalization.pipeline import normalize_bom_line
+from engine.scoring.pipeline import score_bom_line
+from engine.specs.spec_extractor import extract_specs
+from engine.strategy.pipeline import compute_strategy
 
 logger = logging.getLogger("orchestrator")
 
 
-def _canonical_key(ci) -> str:
-    domain = ci.category.value if ci.category else "unknown"
-    if ci.has_mpn and ci.mpn and len(ci.mpn.strip()) >= 4:
-        clean = ci.mpn.strip().upper().replace(" ", "").replace("-", "")
-        mfr = ci.manufacturer.strip().lower()[:20] if ci.manufacturer else ""
-        return f"{domain}:mpn:{mfr}:{clean}".lower() if mfr else f"{domain}:mpn:{clean}".lower()
-    desc = ci.description.strip().lower()[:40] if ci.description else ""
-    mat = ci.material.strip().lower()[:20] if ci.material else ""
-    return f"{domain}:{mat}:{desc}".replace(" ", "_")
-
-
 class BOMIntelligenceEngine:
+    def __init__(self) -> None:
+        self.model_version = SCHEMA_VERSION
+        self._part_master_index = None  # lazy-loaded when available
 
-    def run_pipeline(self, file_path: str, user_location: str = "", target_currency: str = "USD", email: str = "") -> dict[str, Any]:
+    # ── Decomposed endpoints (new) ──
+
+    def normalize(self, request: NormalizationRequest) -> NormalizationResponse:
+        return normalize_bom_line(request, part_master_index=self._part_master_index)
+
+    def enrich(self, request: EnrichmentRequest) -> EnrichmentResponse:
+        return enrich_bom_line(request)
+
+    def score(self, request: ScoringRequest) -> ScoringResponse:
+        return score_bom_line(request)
+
+    def strategy(self, request: StrategyRequest) -> StrategyResponse:
+        return compute_strategy(request)
+
+    # ── Legacy endpoint (retained for /api/analyze-bom backward compat) ──
+
+    def run_pipeline(
+        self,
+        file_path: str,
+        user_location: str = "",
+        target_currency: str = "USD",
+        email: str = "",
+    ) -> dict[str, Any]:
+        warnings.warn(
+            "run_pipeline is deprecated. Use normalize/enrich/score/strategy.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         t0 = time.time()
-        pt = {}
+        pt: dict[str, float] = {}
 
-        # File checksum
         try:
             with open(file_path, "rb") as f:
                 file_checksum = hashlib.sha256(f.read()).hexdigest()
@@ -50,39 +84,37 @@ class BOMIntelligenceEngine:
 
         # Phase 3: Spec extraction + cost/lead/risk estimation
         ts = time.time()
-        components = []
-        total_cost_low = 0
-        total_cost_high = 0
+        components: list[dict] = []
+        total_cost_low = 0.0
+        total_cost_high = 0.0
 
         for ci in classified:
             text_blob = f"{ci.description} {ci.material} {ci.notes}".strip()
             specs = extract_specs(text_blob, ci.category.value)
 
             cost = estimate_cost(
-                category=ci.category.value,
-                material=ci.material,
-                quantity=ci.quantity,
-                is_custom=ci.is_custom,
-                has_mpn=ci.has_mpn,
+                category=ci.category.value, material=ci.material,
+                quantity=ci.quantity, is_custom=ci.is_custom, has_mpn=ci.has_mpn,
             )
             lead = estimate_lead_time(
                 procurement_class=ci.procurement_class.value,
-                category=ci.category.value,
-                quantity=ci.quantity,
+                category=ci.category.value, quantity=ci.quantity,
             )
             risk = estimate_risk(
                 category=ci.category.value,
                 procurement_class=ci.procurement_class.value,
-                material=ci.material,
-                quantity=ci.quantity,
-                is_custom=ci.is_custom,
-                has_mpn=ci.has_mpn,
+                material=ci.material, quantity=ci.quantity,
+                is_custom=ci.is_custom, has_mpn=ci.has_mpn,
                 estimated_cost_mid=cost["unit_cost_mid"],
                 estimated_lead_mid=lead["lead_time_mid_days"],
             )
 
             total_cost_low += cost["total_cost_low"]
             total_cost_high += cost["total_cost_high"]
+
+            canonical_key = generate_canonical_key(
+                ci.category.value, ci.description or "", specs
+            )
 
             comp = {
                 "item_id": ci.item_id,
@@ -113,8 +145,8 @@ class BOMIntelligenceEngine:
                 "procurement_class": ci.procurement_class.value,
                 "rfq_required": ci.rfq_required,
                 "drawing_required": ci.drawing_required,
-                "canonical_part_key": _canonical_key(ci),
-                "review_status": "auto" if ci.confidence >= 0.7 else "needs_review",
+                "canonical_part_key": canonical_key,
+                "review_status": "auto" if ci.confidence >= config.CONFIDENCE_AUTO_THRESHOLD else "needs_review",
                 "specs": specs,
                 "cost_estimate": cost,
                 "lead_time_estimate": lead,
@@ -125,14 +157,13 @@ class BOMIntelligenceEngine:
 
         pt["p3_specs_estimation"] = round(time.time() - ts, 3)
 
-        # Category counts
-        cat_counts = {}
+        cat_counts: dict[str, int] = {}
         for cat in PartCategory:
             cnt = sum(1 for c in components if c["category"] == cat.value)
             if cnt > 0:
                 cat_counts[cat.value] = cnt
 
-        procurement_counts = {}
+        procurement_counts: dict[str, int] = {}
         for c in components:
             pc = c["procurement_class"]
             procurement_counts[pc] = procurement_counts.get(pc, 0) + 1
@@ -157,7 +188,7 @@ class BOMIntelligenceEngine:
             "_meta": {
                 "total_time_s": round(time.time() - t0, 3),
                 "phase_times": pt,
-                "version": "4.0.0",
+                "version": SCHEMA_VERSION,
                 "file_checksum": file_checksum,
             },
         }

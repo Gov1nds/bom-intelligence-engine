@@ -1,0 +1,12 @@
+[
+  {"raw_text": "M8x25 hex bolt stainless steel 304 grade 8.8", "expected_category": "fastener"},
+  {"raw_text": "10k 0805 resistor ±5%", "expected_category": "passive_component"},
+  {"raw_text": "Custom aluminum bracket 50x30x10mm anodized", "expected_category": "machined"},
+  {"raw_text": "0.1uF ceramic capacitor 0603", "expected_category": "passive_component"},
+  {"raw_text": "Pneumatic air cylinder 50mm bore", "expected_category": "pneumatic"},
+  {"raw_text": "24V 5A power supply DIN rail", "expected_category": "power_supply"},
+  {"raw_text": "4-pin waterproof connector IP67", "expected_category": "connector"},
+  {"raw_text": "SS316 rod 25mm dia x 500mm", "expected_category": "raw_material"},
+  {"raw_text": "Heat sink 40x40x10mm aluminum", "expected_category": "thermal"},
+  {"raw_text": "M8 bolt and M8 nut", "expected_split": true}
+]
