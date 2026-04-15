@@ -1,0 +1,12 @@
+
+{
+  "version": "1.0.0",
+  "entries": {
+    "fastener": ["bolt", "nut", "screw", "washer", "rivet", "stud"],
+    "electronics": ["resistor", "capacitor", "inductor", "printed circuit board", "integrated circuit"],
+    "electrical": ["wire", "cable", "connector", "terminal", "relay", "switch"],
+    "mechanical": ["bracket", "housing", "shaft", "gear", "spacer", "bearing"],
+    "sheet_metal": ["sheet metal", "laser cut", "bend", "formed"],
+    "machined": ["machined", "cnc", "turned", "milled", "drilled"]
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "version": "1.0.0",
+  "patterns": {
+    "dimension_separators": ["x", "×", "X"],
+    "decimal_comma": "(?<=\\d),(?=\\d)",
+    "collapse_whitespace": "\\s+"
+  }
+}

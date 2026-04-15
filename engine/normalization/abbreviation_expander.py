@@ -1,38 +1,26 @@
-"""Abbreviation expansion per GAP-035, WF-NORM-001 step 2."""
-import re
+"""Abbreviation expansion backed by repo-local bundled references."""
+from __future__ import annotations
 
-DEFAULT_ABBREVIATIONS: dict[str, str] = {
-    "SS": "stainless steel", "AL": "aluminum", "CU": "copper",
-    "BRG": "bearing", "BRKT": "bracket", "CONN": "connector",
-    "CAP": "capacitor", "RES": "resistor", "IND": "inductor",
-    "ASSY": "assembly", "SHTMTL": "sheet metal", "MACH": "machined",
-    "GR": "grade", "DIA": "diameter", "THK": "thickness",
-    "LG": "length", "QTY": "quantity", "EA": "each",
-    "HEX": "hexagonal", "RD": "round", "SQ": "square",
-    "GALV": "galvanized", "ANOD": "anodized",
-    "SS304": "stainless steel 304", "SS316": "stainless steel 316",
-    "CS": "carbon steel", "HDPE": "high density polyethylene",
-    "PTFE": "polytetrafluoroethylene", "PCB": "printed circuit board",
-    "IC": "integrated circuit", "MCU": "microcontroller",
-    "MOSFET": "metal-oxide-semiconductor field-effect transistor",
-    "SMD": "surface mount device", "THT": "through hole technology",
-    "CNC": "computer numerical control", "EDM": "electrical discharge machining",
-    "PWR": "power", "XFMR": "transformer", "MTG": "mounting",
-    "BLK": "block", "SHT": "sheet", "PNL": "panel",
-    "HSG": "housing", "FLG": "flange", "BRZ": "bronze",
-}
+from engine.normalization.reference_loader import get_normalization_references
+from engine.normalization.text_normalizer import normalize_text
+
+
+DEFAULT_ABBREVIATIONS: dict[str, str] = get_normalization_references().abbreviations
+
 
 
 def expand_abbreviations(
     text: str, custom_dict: dict[str, str] | None = None
 ) -> tuple[str, list[dict]]:
     """Expand abbreviations in text. Returns (expanded_text, trace)."""
-    expansions: list[dict] = []
-    merged = {**DEFAULT_ABBREVIATIONS, **(custom_dict or {})}
-    result = text
-    for abbrev, full_form in merged.items():
-        pattern = re.compile(r"\b" + re.escape(abbrev) + r"\b", re.IGNORECASE)
-        if pattern.search(result):
-            result = pattern.sub(full_form, result)
-            expansions.append({"abbreviation": abbrev, "expanded_to": full_form})
-    return result, expansions
+    if custom_dict:
+        lowered = text.lower()
+        expansions: list[dict] = []
+        for key, value in custom_dict.items():
+            if key.lower() in lowered:
+                lowered = lowered.replace(key.lower(), value.lower())
+                expansions.append({"abbreviation": key, "expanded_to": value.lower()})
+        return lowered, expansions
+
+    normalized_text, trace = normalize_text(text)
+    return normalized_text, trace.abbreviation_expansions

@@ -1,0 +1,8 @@
+{
+  "version": "1.0.0",
+  "entries": {
+    "sheet metal": ["laser cut", "formed", "bent", "punched"],
+    "machined": ["turned", "milled", "drilled", "reamed"],
+    "electronics": ["surface mount device", "through hole"]
+  }
+}

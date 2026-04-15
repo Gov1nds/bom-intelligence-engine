@@ -1,0 +1,26 @@
+
+
+{
+  "version": "1.0.0",
+  "entries": {
+    "ss": "stainless steel",
+    "inox": "stainless steel",
+    "s s": "stainless steel",
+    "printed wiring board": "printed circuit board",
+    "pc board": "printed circuit board",
+    "ohms": "ohm",
+    "ohm resistor": "resistor",
+    "hexagonal": "hex",
+    "zinc plating": "zinc plated",
+    "powder coated": "powder coat",
+    "powder coating": "powder coat",
+    "aluminium": "aluminum",
+    "milli meter": "mm",
+    "millimeter": "mm",
+    "millimeters": "mm",
+    "centimeter": "cm",
+    "centimeters": "cm",
+    "inch": "in",
+    "inches": "in"
+  }
+}

@@ -21,7 +21,7 @@ class Token:
 
 TOKEN_EXTRACTORS: dict[str, re.Pattern] = {
     "value_unit_pair": re.compile(
-        r"(\d+(?:\.\d+)?)\s*(k|M|G|µ|u|m|p|n)?\s*"
+        r"(\d+(?:\.\d+)?)\s*(k|M|G|u|m|p|n)?\s*"
         r"(ohm|Ω|F|H|V|A|W|Hz|mm|cm|in|m|kg|g|lb|oz)\b",
         re.I,
     ),
@@ -30,11 +30,11 @@ TOKEN_EXTRACTORS: dict[str, re.Pattern] = {
         r"(?:\s*[xX×]\s*(\d+(?:\.\d+)?))?\s*(mm|cm|in)?",
         re.I,
     ),
-    "tolerance": re.compile(r"[±]\s*[\d.]+\s*(?:mm|in|thou|µm|%)?", re.I),
+    "tolerance": re.compile(r"[±]\s*[\d.]+\s*(?:mm|in|thou|um|%)?", re.I),
     "thread_spec": re.compile(
-        r"\b(M\d+(?:\.\d+)?(?:\s*[xX]\s*\d+(?:\.\d+)?)?)\b", re.I
+        r"\b(m\d+(?:\.\d+)?(?:\s*[xX]\s*\d+(?:\.\d+)?)?)\b", re.I
     ),
-    "part_number_fragment": re.compile(r"\b[A-Z]{2,5}[-]?\d{3,}[A-Z0-9\-]*\b"),
+    "part_number_fragment": re.compile(r"\b[a-z]{2,5}[-]?\d{3,}[a-z0-9\-]*\b", re.I),
     "package_type": re.compile(
         r"\b(0201|0402|0603|0805|1206|1210|2512|"
         r"SOT-\d+|QFP-\d+|BGA-\d+|DIP-\d+|SOP-\d+|TSSOP-\d+|QFN-\d+)\b",
@@ -43,7 +43,7 @@ TOKEN_EXTRACTORS: dict[str, re.Pattern] = {
     "material_reference": re.compile(
         r"\b(stainless\s*steel|aluminum|copper|brass|titanium|nylon|abs|"
         r"polycarbonate|peek|carbon\s*fiber|steel|inconel|hdpe|ptfe|"
-        r"ss\s*304|ss\s*316|ss304|ss316)\b",
+        r"stainless\s*steel\s*304|stainless\s*steel\s*316|ss\s*304|ss\s*316|ss304|ss316)\b",
         re.I,
     ),
     "finish_reference": re.compile(
@@ -55,6 +55,7 @@ TOKEN_EXTRACTORS: dict[str, re.Pattern] = {
         r"\b(?:grade|class)\s*[:=]?\s*(\d+(?:\.\d+)?)\b", re.I
     ),
 }
+
 
 
 def tokenize_raw_text(raw_text: str) -> list[Token]:

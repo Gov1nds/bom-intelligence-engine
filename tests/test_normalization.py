@@ -1,3 +1,4 @@
+
 """Tests for normalization pipeline per PC-002."""
 import sys
 from pathlib import Path
@@ -7,12 +8,22 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.schemas import NormalizationRequest, NormalizationResponse
+from core.schemas import NormalizationRequest
 from engine.normalization.pipeline import normalize_bom_line
 from engine.normalization.tokenizer import tokenize_raw_text
 from engine.normalization.abbreviation_expander import expand_abbreviations
 from engine.normalization.unit_converter import normalize_units
+from engine.normalization.text_normalizer import normalize_text
+from engine.normalization.reference_loader import get_normalization_references
 from core.canonical_key import generate_canonical_key, normalize_part_name, compute_spec_hash
+
+
+class TestReferenceLoader:
+    def test_loads_bundled_references(self):
+        refs = get_normalization_references()
+        assert refs.version
+        assert refs.abbreviations["pcb"] == "printed circuit board"
+        assert refs.units["ohms"] == "ohm"
 
 
 class TestTokenizer:
@@ -20,12 +31,12 @@ class TestTokenizer:
         assert tokenize_raw_text("") == []
 
     def test_extracts_dimension(self):
-        tokens = tokenize_raw_text("50x30x10mm bracket")
+        tokens = tokenize_raw_text("50 x 30 x 10 mm bracket")
         types = [t.token_type for t in tokens]
         assert "dimension" in types
 
     def test_extracts_thread(self):
-        tokens = tokenize_raw_text("M8x1.25 hex bolt")
+        tokens = tokenize_raw_text("m8 x 1.25 hex bolt")
         types = [t.token_type for t in tokens]
         assert "thread_spec" in types
 
@@ -40,12 +51,12 @@ class TestTokenizer:
         assert "tolerance" in types
 
     def test_extracts_part_number(self):
-        tokens = tokenize_raw_text("LM7805CT voltage regulator")
+        tokens = tokenize_raw_text("lm7805ct voltage regulator")
         types = [t.token_type for t in tokens]
         assert "part_number_fragment" in types
 
     def test_ordering(self):
-        tokens = tokenize_raw_text("M8 50x30mm ±0.1mm")
+        tokens = tokenize_raw_text("m8 50 x 30 mm ±0.1mm")
         positions = [t.raw_span[0] for t in tokens]
         assert positions == sorted(positions)
 
@@ -62,12 +73,27 @@ class TestAbbreviationExpander:
 
     def test_word_boundary(self):
         result, _ = expand_abbreviations("ASSEMBLY part")
-        # "SS" should NOT match inside "ASSEMBLY"
         assert "stainless steel" not in result.lower() or "assembly" in result.lower()
 
     def test_custom_dict(self):
         result, trace = expand_abbreviations("XYZ part", {"XYZ": "custom thing"})
         assert "custom thing" in result
+        assert len(trace) == 1
+
+
+class TestTextNormalizer:
+    def test_unicode_and_dimension_cleanup(self):
+        normalized, trace = normalize_text("4×6 mm PCB")
+        assert normalized == "4 x 6 mm printed circuit board"
+        assert trace.unicode_cleanup_applied is True
+
+    def test_decimal_comma_cleanup(self):
+        normalized, _ = normalize_text("0,5 mm res.")
+        assert normalized == "0.5 mm resistor"
+
+    def test_resistor_ohm_case(self):
+        normalized, _ = normalize_text("10kΩ res.")
+        assert normalized == "10 kohm resistor"
 
 
 class TestUnitConverter:
@@ -124,8 +150,7 @@ class TestNormalizationPipeline:
 
     def test_confidence_routing_auto(self):
         resp = normalize_bom_line(self._make_request("M8x25 hex bolt stainless steel grade 8.8 anodized"))
-        # High-detail input should score decently
-        assert resp.normalization_trace.review_required is not None  # field exists
+        assert resp.normalization_trace.review_required is not None
 
     def test_empty_raises(self):
         from pydantic import ValidationError
@@ -157,3 +182,7 @@ class TestNormalizationPipeline:
     def test_model_version(self):
         resp = normalize_bom_line(self._make_request("test part"))
         assert resp.model_version == "5.0.0"
+
+    def test_pipeline_uses_normalized_part_name(self):
+        resp = normalize_bom_line(self._make_request("4×6 mm PCB"))
+        assert "printed circuit board" in resp.normalized.part_name

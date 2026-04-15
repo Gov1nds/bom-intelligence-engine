@@ -2,7 +2,6 @@
 from __future__ import annotations
 import re
 import time
-from uuid import UUID
 
 from core.canonical_key import generate_canonical_key
 from core.config import config
@@ -12,10 +11,10 @@ from core.schemas import (
     NormalizationRequest, NormalizationResponse, NormalizationTraceOutput,
     NormalizedItem,
 )
-from engine.normalization.abbreviation_expander import expand_abbreviations
 from engine.normalization.part_master_matcher import match_against_part_master
 from engine.normalization.tokenizer import Token, tokenize_raw_text
 from engine.normalization.unit_converter import normalize_units
+from engine.normalization.text_normalizer import normalize_text
 from engine.classification.classifier import classify_from_tokens
 from engine.specs.spec_extractor import extract_specs_from_tokens
 
@@ -23,11 +22,13 @@ from engine.specs.spec_extractor import extract_specs_from_tokens
 SPLIT_PATTERN = re.compile(r"\b(and|&|\+|with)\b", re.I)
 
 
+
 def _extract_mpn(tokens: list[Token]) -> str | None:
     for t in tokens:
         if t.token_type == "part_number_fragment":
             return t.value
     return None
+
 
 
 def _extract_quantity(tokens: list[Token]) -> int | None:
@@ -41,6 +42,7 @@ def _extract_quantity(tokens: list[Token]) -> int | None:
     return None
 
 
+
 def _extract_unit(tokens: list[Token]) -> str | None:
     for t in tokens:
         if t.token_type == "value_unit_pair":
@@ -48,6 +50,7 @@ def _extract_unit(tokens: list[Token]) -> str | None:
                 if u in t.value.lower():
                     return u
     return None
+
 
 
 def _detect_split(raw_text: str, tokens: list[Token]) -> tuple[bool, list[dict] | None]:
@@ -58,12 +61,12 @@ def _detect_split(raw_text: str, tokens: list[Token]) -> tuple[bool, list[dict] 
     return False, None
 
 
+
 def _compute_field_completeness(tokens: list[Token]) -> float:
     types_found = {t.token_type for t in tokens}
     key_types = {"value_unit_pair", "dimension", "material_reference", "part_number_fragment"}
-    if not key_types:
-        return 0.0
     return len(types_found & key_types) / len(key_types)
+
 
 
 def _compute_confidence(
@@ -79,6 +82,7 @@ def _compute_confidence(
         + field_completeness * 0.20
     )
     return round(min(1.0, max(0.0, score)), 4)
+
 
 
 def _compute_ambiguity_flags(
@@ -111,6 +115,7 @@ def _compute_ambiguity_flags(
     return flags
 
 
+
 def normalize_bom_line(
     request: NormalizationRequest, part_master_index: object | None = None
 ) -> NormalizationResponse:
@@ -118,33 +123,25 @@ def normalize_bom_line(
     t0 = time.monotonic()
     bom_line_id_str = str(request.bom_line_id)
 
-    # Step 1: Abbreviation expansion
-    expanded_text, abbreviation_trace = expand_abbreviations(request.raw_text)
+    normalized_text, text_trace = normalize_text(request.raw_text)
 
-    # Step 2: Tokenize
-    tokens = tokenize_raw_text(expanded_text)
-
-    # Step 3: Unit conversion
+    tokens = tokenize_raw_text(normalized_text)
     normalized_tokens, unit_trace = normalize_units(tokens)
 
-    # Step 4: Category classification (token-aware)
     category, subcategory, classification_confidence, classification_reason = (
-        classify_from_tokens(normalized_tokens, expanded_text)
+        classify_from_tokens(normalized_tokens, normalized_text)
     )
 
-    # Step 5: Part_Master matching
     mpn = _extract_mpn(normalized_tokens)
     candidates = match_against_part_master(
-        normalized_tokens, expanded_text, category, mpn=mpn,
+        normalized_tokens, normalized_text, category, mpn=mpn,
         part_master_index=part_master_index,
     )
     best_match = candidates[0] if candidates else None
 
-    # Step 6: Spec extraction (token-aware)
-    spec_json = extract_specs_from_tokens(normalized_tokens, expanded_text)
+    spec_json = extract_specs_from_tokens(normalized_tokens, normalized_text)
 
-    # Step 7: Confidence scoring
-    word_count = max(len(request.raw_text.split()), 1)
+    word_count = max(len(normalized_text.split()), 1)
     token_coverage = min(1.0, len(normalized_tokens) / word_count)
     field_completeness = _compute_field_completeness(normalized_tokens)
     confidence = _compute_confidence(
@@ -154,7 +151,6 @@ def normalize_bom_line(
         field_completeness,
     )
 
-    # Step 8: Review routing
     review_required = confidence < config.CONFIDENCE_AUTO_THRESHOLD
     review_reason = None
     if confidence < config.CONFIDENCE_REVIEW_REQUIRED_THRESHOLD:
@@ -162,26 +158,21 @@ def normalize_bom_line(
     elif confidence < config.CONFIDENCE_AUTO_THRESHOLD:
         review_reason = "Confidence below auto-normalize threshold; human review recommended"
 
-    # Step 9: Canonical key
     part_name = (
         best_match.canonical_name
         if best_match and best_match.part_master_id
-        else expanded_text[:80]
+        else normalized_text[:120]
     )
     canonical_key = generate_canonical_key(category, part_name, spec_json)
 
-    # Step 10: Split/merge detection
-    split_detected, split_candidates = _detect_split(request.raw_text, tokens)
-
-    # Step 11: Ambiguity flags
+    split_detected, split_candidates = _detect_split(normalized_text, tokens)
     ambiguity_flags = _compute_ambiguity_flags(tokens, candidates, confidence)
 
-    # Step 12: Build trace
     processing_time_ms = (time.monotonic() - t0) * 1000
     trace = NormalizationTraceOutput(
         tokens_extracted=[t.to_dict() for t in tokens],
-        unit_conversion_applied=unit_trace,
-        abbreviations_expanded=abbreviation_trace,
+        unit_conversion_applied=text_trace.unit_normalizations + unit_trace,
+        abbreviations_expanded=text_trace.abbreviation_expansions,
         candidate_matches=[c.to_dict() for c in candidates],
         selected_match_confidence=best_match.similarity_score if best_match else None,
         ambiguity_flags=ambiguity_flags,
@@ -191,7 +182,6 @@ def normalize_bom_line(
         processing_time_ms=round(processing_time_ms, 2),
     )
 
-    # Step 13: Events
     events: list[EngineEventSchema] = []
     evt_type = (
         EventTypes.NORMALIZATION_REVIEW_REQUIRED
@@ -201,7 +191,7 @@ def normalize_bom_line(
     evt = build_event(
         evt_type, bom_line_id_str,
         idempotency_key=request.idempotency_key,
-        payload={"confidence": confidence, "category": category},
+        payload={"confidence": confidence, "category": category, "normalized_text": normalized_text},
     )
     events.append(EngineEventSchema(**evt.to_dict()))
 

@@ -1,0 +1,38 @@
+
+{
+  "version": "1.0.0",
+  "symbols": {
+    "millimeter": "mm",
+    "millimeters": "mm",
+    "mm": "mm",
+    "centimeter": "cm",
+    "centimeters": "cm",
+    "cm": "cm",
+    "meter": "m",
+    "meters": "m",
+    "m": "m",
+    "inch": "in",
+    "inches": "in",
+    "in": "in",
+    "ohm": "ohm",
+    "ohms": "ohm",
+    "ω": "ohm",
+    "Ω": "ohm",
+    "volt": "v",
+    "volts": "v",
+    "v": "v",
+    "amp": "a",
+    "amps": "a",
+    "ampere": "a",
+    "a": "a",
+    "watt": "w",
+    "watts": "w",
+    "w": "w",
+    "kilogram": "kg",
+    "kilograms": "kg",
+    "kg": "kg",
+    "gram": "g",
+    "grams": "g",
+    "g": "g"
+  }
+}
