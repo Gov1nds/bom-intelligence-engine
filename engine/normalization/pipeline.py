@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 import time
 
-from core.canonical_key import generate_canonical_key
 from core.config import config
 from core.events import EventTypes, build_event
 from core.schemas import (
@@ -17,6 +16,7 @@ from engine.normalization.unit_converter import normalize_units
 from engine.normalization.text_normalizer import normalize_text
 from engine.classification.classifier import classify_from_tokens
 from engine.specs.spec_extractor import extract_specs_from_tokens
+from engine.canonical.canonical_output import build_canonical_output
 
 
 SPLIT_PATTERN = re.compile(r"\b(and|&|\+|with)\b", re.I)
@@ -158,12 +158,13 @@ def normalize_bom_line(
     elif confidence < config.CONFIDENCE_AUTO_THRESHOLD:
         review_reason = "Confidence below auto-normalize threshold; human review recommended"
 
-    part_name = (
+    canonical_output = build_canonical_output(category, subcategory, normalized_text, spec_json)
+    part_name = canonical_output["canonical_name"] or (
         best_match.canonical_name
         if best_match and best_match.part_master_id
         else normalized_text[:120]
     )
-    canonical_key = generate_canonical_key(category, part_name, spec_json)
+    canonical_key = canonical_output["normalized_part_key"]
 
     split_detected, split_candidates = _detect_split(normalized_text, tokens)
     ambiguity_flags = _compute_ambiguity_flags(tokens, candidates, confidence)
@@ -213,7 +214,12 @@ def normalize_bom_line(
             quantity=_extract_quantity(normalized_tokens) or 1,
             unit=_extract_unit(normalized_tokens) or "each",
             manufacturer_part_number=mpn,
+            canonical_name=canonical_output["canonical_name"],
+            normalized_part_key=canonical_output["normalized_part_key"],
             canonical_key=canonical_key,
+            suggested_processes=canonical_output["suggested_processes"],
+            requires_rfq=canonical_output["requires_rfq"],
+            drawing_required=canonical_output["drawing_required"],
         ),
         confidence=confidence,
         ambiguity_flags=[f.flag_type for f in ambiguity_flags],

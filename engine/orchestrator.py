@@ -10,7 +10,6 @@ import time
 import warnings
 from typing import Any
 
-from core.canonical_key import generate_canonical_key
 from core.config import config
 from core.schemas import (
     SCHEMA_VERSION, EnrichmentRequest, EnrichmentResponse,
@@ -25,6 +24,7 @@ from engine.ingestion.normalizer import ingest_file
 from engine.normalization.pipeline import normalize_bom_line
 from engine.scoring.pipeline import score_bom_line
 from engine.specs.spec_extractor import extract_specs
+from engine.canonical.canonical_output import build_canonical_output
 from engine.strategy.pipeline import compute_strategy
 
 logger = logging.getLogger("orchestrator")
@@ -112,9 +112,10 @@ class BOMIntelligenceEngine:
             total_cost_low += cost["total_cost_low"]
             total_cost_high += cost["total_cost_high"]
 
-            canonical_key = generate_canonical_key(
-                ci.category.value, ci.description or "", specs
+            canonical_output = build_canonical_output(
+                ci.category.value, None, ci.standard_text or ci.description or "", specs
             )
+            canonical_key = canonical_output["normalized_part_key"]
 
             comp = {
                 "item_id": ci.item_id,
@@ -143,8 +144,11 @@ class BOMIntelligenceEngine:
                 "tolerance": ci.tolerance,
                 "secondary_ops": ci.secondary_ops,
                 "procurement_class": ci.procurement_class.value,
-                "rfq_required": ci.rfq_required,
-                "drawing_required": ci.drawing_required,
+                "rfq_required": canonical_output["requires_rfq"],
+                "drawing_required": canonical_output["drawing_required"],
+                "canonical_name": canonical_output["canonical_name"],
+                "normalized_part_key": canonical_output["normalized_part_key"],
+                "suggested_processes": canonical_output["suggested_processes"],
                 "canonical_part_key": canonical_key,
                 "review_status": "auto" if ci.confidence >= config.CONFIDENCE_AUTO_THRESHOLD else "needs_review",
                 "specs": specs,

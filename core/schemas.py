@@ -123,7 +123,13 @@ class NormalizedItem(BaseModel):
     part_name: str = ""; category: str = "unknown"
     subcategory: Optional[str] = None; spec_json: dict = Field(default_factory=dict)
     quantity: int = 1; unit: str = "each"
-    manufacturer_part_number: Optional[str] = None; canonical_key: str = ""
+    manufacturer_part_number: Optional[str] = None
+    canonical_name: str = ""
+    normalized_part_key: str = ""
+    canonical_key: str = ""
+    suggested_processes: list[str] = Field(default_factory=list)
+    requires_rfq: bool = False
+    drawing_required: bool = False
 
 class NormalizationResponse(BaseModel):
     bom_line_id: UUID; normalized: NormalizedItem
