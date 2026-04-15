@@ -1,0 +1,1 @@
+"""Learning signal emission layer."""

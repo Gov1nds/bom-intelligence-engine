@@ -26,6 +26,7 @@ from engine.scoring.pipeline import score_bom_line
 from engine.specs.spec_extractor import extract_specs
 from engine.canonical.canonical_output import build_canonical_output
 from engine.review.review_flags import detect_review_and_uncertainty_flags
+from engine.learning.signal_builder import build_learning_signals
 from engine.strategy.pipeline import compute_strategy
 
 logger = logging.getLogger("orchestrator")
@@ -125,6 +126,17 @@ class BOMIntelligenceEngine:
                 normalized_text=normalized_text,
                 ambiguity_flags=[],
             )
+            learning_signals = build_learning_signals(
+                raw_input=ci.raw_text,
+                normalized_text=normalized_text,
+                canonical_name=canonical_output["canonical_name"],
+                normalized_part_key=canonical_output["normalized_part_key"],
+                category=ci.category.value,
+                category_confidence=ci.confidence,
+                spec_json=specs,
+                review_flags=review_flags,
+                uncertainty_flags=uncertainty_flags,
+            )
             canonical_key = canonical_output["normalized_part_key"]
 
             comp = {
@@ -163,6 +175,7 @@ class BOMIntelligenceEngine:
                 "review_status": "auto" if ci.confidence >= config.CONFIDENCE_AUTO_THRESHOLD else "needs_review",
                 "review_flags": review_flags,
                 "uncertainty_flags": uncertainty_flags,
+                "learning_signals": learning_signals,
                 "specs": specs,
                 "cost_estimate": cost,
                 "lead_time_estimate": lead,

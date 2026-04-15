@@ -18,6 +18,7 @@ from engine.classification.classifier import classify_from_tokens
 from engine.specs.spec_extractor import extract_specs_from_tokens
 from engine.canonical.canonical_output import build_canonical_output
 from engine.review.review_flags import detect_review_and_uncertainty_flags
+from engine.learning.signal_builder import build_learning_signals
 
 
 SPLIT_PATTERN = re.compile(r"\b(and|&|\+|with)\b", re.I)
@@ -177,6 +178,17 @@ def normalize_bom_line(
         normalized_text=normalized_text,
         ambiguity_flags=[f.flag_type for f in ambiguity_flags],
     )
+    learning_signals = build_learning_signals(
+        raw_input=request.raw_text,
+        normalized_text=normalized_text,
+        canonical_name=canonical_output["canonical_name"],
+        normalized_part_key=canonical_output["normalized_part_key"],
+        category=category,
+        category_confidence=classification_confidence,
+        spec_json=spec_json,
+        review_flags=review_flags,
+        uncertainty_flags=uncertainty_flags,
+    )
 
     processing_time_ms = (time.monotonic() - t0) * 1000
     trace = NormalizationTraceOutput(
@@ -231,6 +243,7 @@ def normalize_bom_line(
             drawing_required=canonical_output["drawing_required"],
             review_flags=review_flags,
             uncertainty_flags=uncertainty_flags,
+            learning_signals=learning_signals,
         ),
         confidence=confidence,
         ambiguity_flags=[f.flag_type for f in ambiguity_flags],

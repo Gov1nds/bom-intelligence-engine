@@ -132,6 +132,7 @@ class NormalizedItem(BaseModel):
     drawing_required: bool = False
     review_flags: list[str] = Field(default_factory=list)
     uncertainty_flags: list[str] = Field(default_factory=list)
+    learning_signals: dict[str, Any] = Field(default_factory=dict)
 
 class NormalizationResponse(BaseModel):
     bom_line_id: UUID; normalized: NormalizedItem
@@ -235,51 +236,43 @@ class TLCBreakdown(BaseModel):
 class VendorScoreEntry(BaseModel):
     vendor_id: str; composite_score: float = 0.0
     dimension_scores: dict = Field(default_factory=dict)
-    tlc: Optional[Money] = None; tlc_breakdown: Optional[TLCBreakdown] = None
-    confidence_level: ConfidenceLevel = ConfidenceLevel.LOW
-    eliminated: bool = False; elimination_reason: Optional[str] = None
-    explanation: str = ""
+    tlc: TLCBreakdown = Field(default_factory=TLCBreakdown)
+    risk_adjustments: dict = Field(default_factory=dict)
+    recommendation_rank: int = 0
 
 class ScoringResponse(BaseModel):
     bom_line_id: UUID
     vendor_scores: list[VendorScoreEntry] = Field(default_factory=list)
-    weight_profile_applied: dict = Field(default_factory=dict)
-    data_sources_snapshot: dict = Field(default_factory=dict)
+    model_version: str = SCHEMA_VERSION
     events: list[EngineEventSchema] = Field(default_factory=list)
 
 # ── Strategy ──
 
-class ScoringData(BaseModel):
+class ScoreData(BaseModel):
     vendor_scores: list[VendorScoreEntry] = Field(default_factory=list)
-    weight_profile_applied: dict = Field(default_factory=dict)
 
 class StrategyRequest(BaseModel):
     bom_line_id: UUID
-    score_data: ScoringData = Field(default_factory=ScoringData)
-    enrichment_data: EnrichmentData = Field(default_factory=EnrichmentData)
+    score_data: ScoreData = Field(default_factory=ScoreData)
+    enrichment_data: dict = Field(default_factory=dict)
     project_context: ProjectContext = Field(default_factory=ProjectContext)
     idempotency_key: str = ""
 
 class StrategyRecommendation(BaseModel):
-    sourcing_mode: str = "single_source"
-    recommended_vendor_ids: list[str] = Field(default_factory=list)
-    tlc_comparison: dict = Field(default_factory=dict)
-    crossover_quantity: Optional[int] = None; explanation: str = ""
+    recommended_vendor_id: Optional[str] = None
+    rationale: list[str] = Field(default_factory=list)
+    sourcing_path: str = "rfq"
+    action_items: list[str] = Field(default_factory=list)
 
 class StrategyResponse(BaseModel):
     bom_line_id: UUID
     strategy_recommendation: StrategyRecommendation = Field(default_factory=StrategyRecommendation)
-    substitution_candidates: list[dict] = Field(default_factory=list)
-    consolidation_signals: Optional[dict] = None
-    data_freshness_summary: list[TtlWindow] = Field(default_factory=list)
-    source_evidence: list[dict] = Field(default_factory=list)
+    model_version: str = SCHEMA_VERSION
     events: list[EngineEventSchema] = Field(default_factory=list)
 
 # ── Error ──
 
-class FieldError(BaseModel):
-    field: str; message: str
-
 class ErrorEnvelope(BaseModel):
-    error_code: str; message: str; trace_id: str = ""
-    details: Optional[list[FieldError]] = None
+    error_code: str
+    message: str
+    trace_id: Optional[str] = None
