@@ -186,3 +186,37 @@ class TestNormalizationPipeline:
     def test_pipeline_uses_normalized_part_name(self):
         resp = normalize_bom_line(self._make_request("4×6 mm PCB"))
         assert "printed circuit board" in resp.normalized.part_name
+
+class TestSpecExtractionBatchD:
+    def _make_request(self, raw_text: str) -> NormalizationRequest:
+        return NormalizationRequest(bom_line_id=uuid4(), raw_text=raw_text)
+
+    def test_fastener_attributes(self):
+        resp = normalize_bom_line(self._make_request("M8 x 30 hex bolt SS304 galvanized qty 12"))
+        attrs = resp.normalized.spec_json.get("attributes", {})
+        assert attrs.get("thread_size") == "M8X30" or attrs.get("thread_size") == "M8"
+        assert attrs.get("diameter_mm") == 8.0
+        assert attrs.get("material") == "stainless_steel"
+        assert attrs.get("grade") == "ss304"
+        assert attrs.get("finish") == "galvanized"
+        assert attrs.get("quantity") == 12
+
+    def test_electronics_attributes(self):
+        resp = normalize_bom_line(self._make_request("10k ohm resistor 16V 2A 5W ±5% 0.1uF"))
+        attrs = resp.normalized.spec_json.get("attributes", {})
+        assert attrs.get("resistance_ohm") == 10000.0
+        assert attrs.get("voltage_v") == 16.0
+        assert attrs.get("current_a") == 2.0
+        assert attrs.get("power_w") == 5.0
+        assert attrs.get("tolerance_percent") == 5.0
+        assert abs(attrs.get("capacitance_f") - 0.0000001) < 1e-12
+
+    def test_dimension_material_process_attributes(self):
+        resp = normalize_bom_line(self._make_request("Custom aluminum bracket 50 x 30 x 3 mm anodized laser cut"))
+        attrs = resp.normalized.spec_json.get("attributes", {})
+        assert attrs.get("material") == "aluminum"
+        assert attrs.get("width_mm") == 50.0
+        assert attrs.get("height_mm") == 30.0
+        assert attrs.get("thickness_mm") == 3.0
+        assert attrs.get("finish") == "anodized"
+        assert "laser_cut" in attrs.get("process_hints", [])
