@@ -130,6 +130,8 @@ class NormalizedItem(BaseModel):
     suggested_processes: list[str] = Field(default_factory=list)
     requires_rfq: bool = False
     drawing_required: bool = False
+    review_flags: list[str] = Field(default_factory=list)
+    uncertainty_flags: list[str] = Field(default_factory=list)
 
 class NormalizationResponse(BaseModel):
     bom_line_id: UUID; normalized: NormalizedItem

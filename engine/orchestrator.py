@@ -25,6 +25,7 @@ from engine.normalization.pipeline import normalize_bom_line
 from engine.scoring.pipeline import score_bom_line
 from engine.specs.spec_extractor import extract_specs
 from engine.canonical.canonical_output import build_canonical_output
+from engine.review.review_flags import detect_review_and_uncertainty_flags
 from engine.strategy.pipeline import compute_strategy
 
 logger = logging.getLogger("orchestrator")
@@ -112,8 +113,17 @@ class BOMIntelligenceEngine:
             total_cost_low += cost["total_cost_low"]
             total_cost_high += cost["total_cost_high"]
 
+            normalized_text = ci.standard_text or ci.description or ""
             canonical_output = build_canonical_output(
-                ci.category.value, None, ci.standard_text or ci.description or "", specs
+                ci.category.value, None, normalized_text, specs
+            )
+            review_flags, uncertainty_flags = detect_review_and_uncertainty_flags(
+                category=ci.category.value,
+                classification_confidence=ci.confidence,
+                spec_json=specs,
+                canonical_output=canonical_output,
+                normalized_text=normalized_text,
+                ambiguity_flags=[],
             )
             canonical_key = canonical_output["normalized_part_key"]
 
@@ -151,6 +161,8 @@ class BOMIntelligenceEngine:
                 "suggested_processes": canonical_output["suggested_processes"],
                 "canonical_part_key": canonical_key,
                 "review_status": "auto" if ci.confidence >= config.CONFIDENCE_AUTO_THRESHOLD else "needs_review",
+                "review_flags": review_flags,
+                "uncertainty_flags": uncertainty_flags,
                 "specs": specs,
                 "cost_estimate": cost,
                 "lead_time_estimate": lead,

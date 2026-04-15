@@ -17,6 +17,7 @@ from engine.normalization.text_normalizer import normalize_text
 from engine.classification.classifier import classify_from_tokens
 from engine.specs.spec_extractor import extract_specs_from_tokens
 from engine.canonical.canonical_output import build_canonical_output
+from engine.review.review_flags import detect_review_and_uncertainty_flags
 
 
 SPLIT_PATTERN = re.compile(r"\b(and|&|\+|with)\b", re.I)
@@ -168,6 +169,14 @@ def normalize_bom_line(
 
     split_detected, split_candidates = _detect_split(normalized_text, tokens)
     ambiguity_flags = _compute_ambiguity_flags(tokens, candidates, confidence)
+    review_flags, uncertainty_flags = detect_review_and_uncertainty_flags(
+        category=category,
+        classification_confidence=classification_confidence,
+        spec_json=spec_json,
+        canonical_output=canonical_output,
+        normalized_text=normalized_text,
+        ambiguity_flags=[f.flag_type for f in ambiguity_flags],
+    )
 
     processing_time_ms = (time.monotonic() - t0) * 1000
     trace = NormalizationTraceOutput(
@@ -220,6 +229,8 @@ def normalize_bom_line(
             suggested_processes=canonical_output["suggested_processes"],
             requires_rfq=canonical_output["requires_rfq"],
             drawing_required=canonical_output["drawing_required"],
+            review_flags=review_flags,
+            uncertainty_flags=uncertainty_flags,
         ),
         confidence=confidence,
         ambiguity_flags=[f.flag_type for f in ambiguity_flags],
