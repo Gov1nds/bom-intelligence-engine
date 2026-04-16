@@ -1,4 +1,3 @@
-
 """Tests for normalization pipeline per PC-002."""
 import sys
 from pathlib import Path
@@ -94,6 +93,18 @@ class TestTextNormalizer:
     def test_resistor_ohm_case(self):
         normalized, _ = normalize_text("10kΩ res.")
         assert normalized == "10 kohm resistor"
+
+    def test_diameter_symbol_and_abbreviation_cleanup(self):
+        normalized, _ = normalize_text("Ø10mm SS brkt")
+        assert normalized == "diameter 10 mm stainless steel bracket"
+
+    def test_parentheses_and_semicolon_cleanup(self):
+        normalized, _ = normalize_text("PCB;(4x6mm)")
+        assert normalized == "printed circuit board 4 x 6 mm"
+
+    def test_fullword_unit_normalization(self):
+        normalized, _ = normalize_text("12 inches panel")
+        assert normalized == "12 in panel"
 
 
 class TestUnitConverter:
@@ -219,4 +230,4 @@ class TestSpecExtractionBatchD:
         assert attrs.get("height_mm") == 30.0
         assert attrs.get("thickness_mm") == 3.0
         assert attrs.get("finish") == "anodized"
-        assert "laser_cut" in attrs.get("process_hints", [])
+        assert "laser_cut" in attrs.get("process_hints", [])    

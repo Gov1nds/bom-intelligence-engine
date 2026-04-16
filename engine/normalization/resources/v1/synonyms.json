@@ -1,13 +1,12 @@
-
-
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "entries": {
     "ss": "stainless steel",
     "inox": "stainless steel",
     "s s": "stainless steel",
     "printed wiring board": "printed circuit board",
     "pc board": "printed circuit board",
+    "printed-circuit board": "printed circuit board",
     "ohms": "ohm",
     "ohm resistor": "resistor",
     "hexagonal": "hex",
@@ -21,6 +20,20 @@
     "centimeter": "cm",
     "centimeters": "cm",
     "inch": "in",
-    "inches": "in"
+    "inches": "in",
+    "st st": "stainless steel",
+    "st.steel": "stainless steel",
+    "s steel": "stainless steel",
+    "dia.": "diameter",
+    "od.": "outer diameter",
+    "id.": "inner diameter",
+    "o/d": "outer diameter",
+    "i/d": "inner diameter",
+    "ø": "diameter",
+    "⌀": "diameter",
+    "phi": "diameter",
+    "qty.": "quantity",
+    "approx.": "approx",
+    "assy kit": "assembly kit"
   }
 }

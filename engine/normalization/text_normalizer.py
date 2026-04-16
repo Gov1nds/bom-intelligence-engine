@@ -1,4 +1,3 @@
-
 """Deterministic BOM text normalization using bundled reference assets."""
 from __future__ import annotations
 
@@ -10,7 +9,32 @@ from engine.normalization.reference_loader import get_normalization_references
 
 
 _SAFE_SHORT_ABBREVIATIONS = {"ss", "al", "cu", "cs"}
-_MEASUREMENT_UNITS = ("mm", "cm", "m", "in", "kg", "g", "lb", "oz", "ohm", "v", "a", "w", "hz")
+_MEASUREMENT_UNITS = (
+    "mm", "cm", "m", "in", "ft", "kg", "g", "lb", "oz", "ohm", "v", "a", "w", "hz"
+)
+_UNICODE_REPLACEMENTS = {
+    "µ": "u",
+    "μ": "u",
+    "Ω": "ohm",
+    "ω": "ohm",
+    "°": " deg ",
+    "º": " deg ",
+    "Ø": " diameter ",
+    "ø": " diameter ",
+    "⌀": " diameter ",
+    "∅": " diameter ",
+    "–": "-",
+    "—": "-",
+    "−": "-",
+    "•": " ",
+    "·": " ",
+    "／": "/",
+    "，": ",",
+    "：": ":",
+    "；": ";",
+    "（": "(",
+    "）": ")",
+}
 
 
 @dataclass
@@ -27,17 +51,36 @@ class TextNormalizationTrace:
 
 def _normalize_unicode(text: str) -> tuple[str, bool]:
     normalized = unicodedata.normalize("NFKC", text)
-    normalized = normalized.replace("µ", "u")
-    normalized = normalized.replace("Ω", "ohm").replace("ω", "ohm")
+    for source, target in _UNICODE_REPLACEMENTS.items():
+        normalized = normalized.replace(source, target)
     changed = normalized != text or ("×" in text)
     return normalized, changed
 
 
 
 def _cleanup_numeric_formatting(text: str, trace: TextNormalizationTrace) -> str:
-    updated = re.sub(r"(?<=\d),(?=\d)", ".", text)
-    if updated != text:
+    updated = text
+
+    decimal_cleaned = re.sub(r"(?<=\d),(?=\d)", ".", updated)
+    if decimal_cleaned != updated:
         trace.numeric_cleanup_applied.append({"rule": "decimal_comma_to_dot"})
+    updated = decimal_cleaned
+
+    unit_spacing_cleaned = re.sub(
+        rf"(?<=\d)(?=({'|'.join(_MEASUREMENT_UNITS)})(?![A-Za-z]))",
+        " ",
+        updated,
+        flags=re.IGNORECASE,
+    )
+    if unit_spacing_cleaned != updated:
+        trace.numeric_cleanup_applied.append({"rule": "insert_space_before_measurement_unit"})
+    updated = unit_spacing_cleaned
+
+    multiplier_spacing_cleaned = re.sub(r"(?<=\d)[xX](?=\d)", " x ", updated)
+    if multiplier_spacing_cleaned != updated:
+        trace.numeric_cleanup_applied.append({"rule": "normalize_dimension_separator_spacing"})
+    updated = multiplier_spacing_cleaned
+
     return updated
 
 
@@ -46,9 +89,12 @@ def _cleanup_punctuation(text: str) -> tuple[str, bool]:
     original = text
     text = text.replace("×", " x ")
     text = re.sub(r"([0-9])\s*[xX]\s*([0-9])", r"\1 x \2", text)
+    text = re.sub(r"\s*/\s*(?=\d)", "/", text)
     text = re.sub(r"[;,]+", " ", text)
     text = re.sub(r"\s*[:=]\s*", " ", text)
+    text = re.sub(r"[\[\]{}()]+", " ", text)
     text = re.sub(r"(?<!\d)\.(?!\d)", " ", text)
+    text = re.sub(r"\s+-\s+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text, text != original
 
@@ -97,8 +143,14 @@ def _normalize_units(text: str, trace: TextNormalizationTrace) -> str:
                 trace.unit_normalizations.append({"from": source, "to": target})
 
     result = re.sub(r"(\d)\s*(x)\s*(\d)", r"\1 x \3", result, flags=re.IGNORECASE)
-    result = re.sub(rf"(\d(?:\.\d+)?)\s*({'|'.join(_MEASUREMENT_UNITS)})\b", r"\1 \2", result, flags=re.IGNORECASE)
+    result = re.sub(
+        rf"(\d(?:\.\d+)?)\s*({'|'.join(_MEASUREMENT_UNITS)})\b",
+        r"\1 \2",
+        result,
+        flags=re.IGNORECASE,
+    )
     result = re.sub(r"(\d+(?:\.\d+)?)\s*([kmgupn]ohm)\b", r"\1 \2", result, flags=re.IGNORECASE)
+    result = re.sub(r"\bdeg\b", "deg", result, flags=re.IGNORECASE)
     result = re.sub(r"\s+", " ", result).strip().rstrip('.')
     return result
 

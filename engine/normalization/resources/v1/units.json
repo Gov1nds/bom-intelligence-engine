@@ -1,6 +1,5 @@
-
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "symbols": {
     "millimeter": "mm",
     "millimeters": "mm",
@@ -14,6 +13,9 @@
     "inch": "in",
     "inches": "in",
     "in": "in",
+    "ft": "ft",
+    "foot": "ft",
+    "feet": "ft",
     "ohm": "ohm",
     "ohms": "ohm",
     "ω": "ohm",
@@ -24,15 +26,24 @@
     "amp": "a",
     "amps": "a",
     "ampere": "a",
+    "amperes": "a",
     "a": "a",
     "watt": "w",
     "watts": "w",
     "w": "w",
+    "hertz": "hz",
+    "hz": "hz",
     "kilogram": "kg",
     "kilograms": "kg",
     "kg": "kg",
     "gram": "g",
     "grams": "g",
-    "g": "g"
+    "g": "g",
+    "pound": "lb",
+    "pounds": "lb",
+    "lb": "lb",
+    "ounce": "oz",
+    "ounces": "oz",
+    "oz": "oz"
   }
 }
