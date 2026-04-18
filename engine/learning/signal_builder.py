@@ -58,7 +58,9 @@ def _normalize_attributes(spec_json: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _signal_strength(category_confidence: float, review_flags: list[str], uncertainty_flags: list[str]) -> str:
-    review_count = len(review_flags)
+    # Exclude meta-summary flag from signal count
+    substantive_review = [f for f in review_flags if f != "NEEDS_MANUAL_REVIEW"]
+    review_count = len(substantive_review)
     uncertainty_count = len(uncertainty_flags)
     has_critical_review = "MISSING_CRITICAL_ATTRIBUTE" in review_flags
 
@@ -69,7 +71,7 @@ def _signal_strength(category_confidence: float, review_flags: list[str], uncert
         and uncertainty_count <= 1
     ):
         return "strong"
-    if category_confidence < 0.60 or has_critical_review or review_count >= 3 or uncertainty_count >= 3:
+    if category_confidence < 0.50 or has_critical_review or review_count >= 3 or uncertainty_count >= 3:
         return "weak"
     return "medium"
 

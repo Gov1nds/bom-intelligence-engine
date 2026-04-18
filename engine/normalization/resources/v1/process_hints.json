@@ -1,8 +1,231 @@
 {
-  "version": "1.0.0",
+  "version": "2.0.0",
+  "description": "Manufacturing process hints by category for BOM intelligence",
   "entries": {
-    "sheet metal": ["laser cut", "formed", "bent", "punched"],
-    "machined": ["turned", "milled", "drilled", "reamed"],
-    "electronics": ["surface mount device", "through hole"]
+    "sheet metal": [
+      "laser cut",
+      "formed",
+      "bent",
+      "punched",
+      "stamped",
+      "nibbled",
+      "turret punched",
+      "folded",
+      "waterjet cut",
+      "plasma cut"
+    ],
+    "machined": [
+      "turned",
+      "milled",
+      "drilled",
+      "reamed",
+      "bored",
+      "ground",
+      "tapped",
+      "threaded",
+      "cnc machined",
+      "lathe",
+      "honed",
+      "lapped"
+    ],
+    "electronics": [
+      "surface mount device",
+      "through hole",
+      "reflow",
+      "wave solder",
+      "hand solder"
+    ],
+    "fabrication": [
+      "welded",
+      "brazed",
+      "soldered",
+      "riveted",
+      "bonded",
+      "glued"
+    ],
+    "surface treatment": [
+      "anodized",
+      "plated",
+      "painted",
+      "powder coated",
+      "galvanized",
+      "passivated",
+      "black oxide",
+      "zinc plated",
+      "nickel plated",
+      "chrome plated",
+      "electropolished",
+      "bead blasted",
+      "shot blasted",
+      "phosphated"
+    ],
+    "heat treatment": [
+      "hardened",
+      "tempered",
+      "annealed",
+      "normalized",
+      "stress relieved",
+      "case hardened",
+      "nitrided",
+      "carburized",
+      "induction hardened",
+      "flame hardened",
+      "quenched"
+    ],
+    "additive": [
+      "3d printed",
+      "fdm",
+      "sla",
+      "sls",
+      "dmls",
+      "slm",
+      "ebm"
+    ],
+    "casting": [
+      "die cast",
+      "sand cast",
+      "investment cast",
+      "centrifugal cast",
+      "gravity cast"
+    ],
+    "forging": [
+      "forged",
+      "drop forged",
+      "cold forged",
+      "hot forged",
+      "roll forged",
+      "press forged"
+    ]
+  },
+  "keyword_to_process_map": {
+    "laser": "laser_cutting",
+    "waterjet": "waterjet_cutting",
+    "plasma": "plasma_cutting",
+    "cnc": "cnc_machining",
+    "mill": "milling",
+    "turn": "turning",
+    "grind": "grinding",
+    "edm": "wire_erosion",
+    "press brake": "press_brake_bending",
+    "weld": "welding",
+    "mig": "mig_welding",
+    "tig": "tig_welding",
+    "braze": "brazing",
+    "solder": "soldering",
+    "injection": "injection_moulding",
+    "blow": "blow_moulding",
+    "cast": "casting",
+    "forge": "forging",
+    "sinter": "sintering",
+    "print": "3d_printing",
+    "fdm": "fdm_printing",
+    "sla": "sla_printing",
+    "anodize": "anodizing",
+    "plate": "plating",
+    "galvanize": "galvanizing",
+    "powder coat": "powder_coating",
+    "paint": "painting",
+    "bend": "bending",
+    "punch": "punching",
+    "stamp": "stamping",
+    "drill": "drilling",
+    "ream": "reaming",
+    "bore": "boring",
+    "tap": "tapping",
+    "thread": "threading",
+    "hone": "honing",
+    "lap": "lapping",
+    "polish": "polishing",
+    "deburr": "deburring",
+    "heat treat": "heat_treatment",
+    "harden": "hardening",
+    "temper": "tempering",
+    "anneal": "annealing",
+    "normalize": "normalizing",
+    "quench": "quenching",
+    "passivate": "passivation",
+    "etch": "chemical_etching"
+  },
+  "by_category": {
+    "fastener": {
+      "primary_processes": [
+        "cold_heading",
+        "thread_rolling",
+        "heat_treatment"
+      ],
+      "secondary_processes": [
+        "plating",
+        "coating"
+      ],
+      "make_vs_buy": "buy",
+      "requires_drawing": false,
+      "requires_rfq": false
+    },
+    "electronics": {
+      "primary_processes": [
+        "smt_assembly",
+        "wave_soldering",
+        "reflow"
+      ],
+      "secondary_processes": [
+        "conformal_coating",
+        "potting"
+      ],
+      "make_vs_buy": "buy",
+      "requires_drawing": false,
+      "requires_rfq": false
+    },
+    "sheet_metal": {
+      "primary_processes": [
+        "laser_cutting",
+        "bending",
+        "welding"
+      ],
+      "secondary_processes": [
+        "deburring",
+        "painting",
+        "powder_coating"
+      ],
+      "make_vs_buy": "make",
+      "requires_drawing": true,
+      "requires_rfq": true
+    },
+    "machined": {
+      "primary_processes": [
+        "cnc_turning",
+        "cnc_milling",
+        "grinding"
+      ],
+      "secondary_processes": [
+        "heat_treatment",
+        "plating",
+        "anodizing"
+      ],
+      "make_vs_buy": "make",
+      "requires_drawing": true,
+      "requires_rfq": true
+    },
+    "raw_material": {
+      "primary_processes": [
+        "cutting_to_size"
+      ],
+      "secondary_processes": [],
+      "make_vs_buy": "buy",
+      "requires_drawing": false,
+      "requires_rfq": false
+    },
+    "custom_mechanical": {
+      "primary_processes": [
+        "cnc_machining",
+        "fabrication"
+      ],
+      "secondary_processes": [
+        "heat_treatment",
+        "surface_treatment"
+      ],
+      "make_vs_buy": "make",
+      "requires_drawing": true,
+      "requires_rfq": true
+    }
   }
 }

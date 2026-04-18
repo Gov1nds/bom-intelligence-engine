@@ -1,8 +1,249 @@
 {
-  "version": "1.0.0",
+  "version": "2.0.0",
+  "description": "Domain-specific regex patterns for specification extraction",
   "patterns": {
-    "dimension_separators": ["x", "×", "X"],
+    "dimension_separators": [
+      "x",
+      "\u00d7",
+      "X"
+    ],
     "decimal_comma": "(?<=\\d),(?=\\d)",
     "collapse_whitespace": "\\s+"
+  },
+  "by_domain": {
+    "fastener": {
+      "patterns": [
+        {
+          "id": "PAT-F01",
+          "name": "metric_thread",
+          "regex": "\\bM(\\d+(?:\\.\\d+)?)(?:\\s*[xX\u00d7]\\s*(\\d+(?:\\.\\d+)?))?\\b",
+          "output_field": "thread_size",
+          "priority": 1
+        },
+        {
+          "id": "PAT-F02",
+          "name": "unc_thread",
+          "regex": "\\b(\\d+/\\d+)-(\\d+)\\s*(?:UNC)?\\b",
+          "output_field": "thread_size",
+          "priority": 1
+        },
+        {
+          "id": "PAT-F03",
+          "name": "unf_thread",
+          "regex": "\\b(\\d+/\\d+)-(\\d+)\\s*UNF\\b",
+          "output_field": "thread_size",
+          "priority": 1
+        },
+        {
+          "id": "PAT-F04",
+          "name": "bsp_thread",
+          "regex": "\\b(\\d+/\\d+)\\s*BSP[PT]?\\b",
+          "output_field": "thread_size",
+          "priority": 1
+        },
+        {
+          "id": "PAT-F05",
+          "name": "npt_thread",
+          "regex": "\\b(\\d+/\\d+)\\s*NPT[F]?\\b",
+          "output_field": "thread_size",
+          "priority": 1
+        },
+        {
+          "id": "PAT-F06",
+          "name": "fastener_length",
+          "regex": "\\b(\\d+(?:\\.\\d+)?)\\s*(mm|in|inch)\\b",
+          "output_field": "length_mm",
+          "output_unit": "mm",
+          "priority": 2
+        },
+        {
+          "id": "PAT-F07",
+          "name": "iso_grade",
+          "regex": "\\b(?:grade|class|gr|cl)\\s*[:=]?\\s*(\\d+\\.\\d+|\\d+)\\b",
+          "output_field": "grade_class",
+          "priority": 3
+        },
+        {
+          "id": "PAT-F08",
+          "name": "iso_property_class",
+          "regex": "\\b(\\d+\\.\\d+)\\s*(?:class|grade)?\\b",
+          "output_field": "grade_class",
+          "priority": 3
+        }
+      ]
+    },
+    "electronics": {
+      "patterns": [
+        {
+          "id": "PAT-E01",
+          "name": "resistance",
+          "regex": "(\\d+(?:\\.\\d+)?)\\s*([kKmMgG]?)\\s*(?:ohm|\u03a9|\u03c9|R)\\b",
+          "output_field": "resistance_ohm",
+          "output_unit": "ohm",
+          "priority": 1
+        },
+        {
+          "id": "PAT-E02",
+          "name": "capacitance",
+          "regex": "(\\d+(?:\\.\\d+)?)\\s*([pPnNuU\u00b5mM]?)\\s*[fF]\\b",
+          "output_field": "capacitance_f",
+          "output_unit": "F",
+          "priority": 1
+        },
+        {
+          "id": "PAT-E03",
+          "name": "inductance",
+          "regex": "(\\d+(?:\\.\\d+)?)\\s*([nNuU\u00b5mM]?)\\s*[hH]\\b",
+          "output_field": "inductance_h",
+          "output_unit": "H",
+          "priority": 1
+        },
+        {
+          "id": "PAT-E04",
+          "name": "voltage",
+          "regex": "(\\d+(?:\\.\\d+)?)\\s*([mMkK]?)\\s*[vV](?:DC|AC)?\\b",
+          "output_field": "voltage_v",
+          "output_unit": "V",
+          "priority": 2
+        },
+        {
+          "id": "PAT-E05",
+          "name": "tolerance_pct",
+          "regex": "[\u00b1]?\\s*(\\d+(?:\\.\\d+)?)\\s*%",
+          "output_field": "tolerance_percent",
+          "priority": 2
+        },
+        {
+          "id": "PAT-E06",
+          "name": "package_smd",
+          "regex": "\\b(0201|0402|0603|0805|1206|1210|1812|2010|2512)\\b",
+          "output_field": "package",
+          "priority": 1
+        },
+        {
+          "id": "PAT-E07",
+          "name": "power_rating",
+          "regex": "(\\d+(?:\\.\\d+)?)\\s*([mMkK]?)\\s*[wW]\\b",
+          "output_field": "power_w",
+          "output_unit": "W",
+          "priority": 2
+        },
+        {
+          "id": "PAT-E08",
+          "name": "dielectric",
+          "regex": "\\b(C0G|NP0|X5R|X7R|Y5V|X7S|X6S|X8R)\\b",
+          "output_field": "dielectric",
+          "priority": 2
+        }
+      ]
+    },
+    "mechanical": {
+      "patterns": [
+        {
+          "id": "PAT-M01",
+          "name": "dimension_3d",
+          "regex": "(\\d+(?:\\.\\d+)?)\\s*[xX\u00d7]\\s*(\\d+(?:\\.\\d+)?)\\s*[xX\u00d7]\\s*(\\d+(?:\\.\\d+)?)\\s*(mm|cm|in|m)?",
+          "output_field": "dimensions",
+          "priority": 1
+        },
+        {
+          "id": "PAT-M02",
+          "name": "diameter",
+          "regex": "(?:dia|diameter|[\u00f8\u00d8\u2300\u2205])\\s*[:=]?\\s*(\\d+(?:\\.\\d+)?)\\s*(mm|cm|in)?",
+          "output_field": "diameter_mm",
+          "output_unit": "mm",
+          "priority": 1
+        },
+        {
+          "id": "PAT-M03",
+          "name": "thickness",
+          "regex": "(?:thick|thk|thkns|t)\\s*[:=]?\\s*(\\d+(?:\\.\\d+)?)\\s*(mm|cm|in)?",
+          "output_field": "thickness_mm",
+          "output_unit": "mm",
+          "priority": 2
+        },
+        {
+          "id": "PAT-M04",
+          "name": "iso_tolerance",
+          "regex": "\\b([hHkKgGfFeEdDcCbBaAnNpPrRsStTuU]\\d{1,2})\\b",
+          "output_field": "tolerance_class",
+          "priority": 3
+        },
+        {
+          "id": "PAT-M05",
+          "name": "surface_finish_ra",
+          "regex": "Ra\\s*[:=]?\\s*(\\d+(?:\\.\\d+)?)\\s*(um|\u00b5m)?",
+          "output_field": "surface_finish_ra_um",
+          "output_unit": "um",
+          "priority": 3
+        },
+        {
+          "id": "PAT-M06",
+          "name": "hardness_hrc",
+          "regex": "(\\d+(?:\\.\\d+)?)\\s*HRC\\b",
+          "output_field": "hardness_hrc",
+          "priority": 3
+        }
+      ]
+    },
+    "sheet_metal": {
+      "patterns": [
+        {
+          "id": "PAT-S01",
+          "name": "gauge",
+          "regex": "\\b(\\d+)\\s*(?:ga|gauge|swg|awg|g)\\b",
+          "output_field": "gauge",
+          "priority": 1
+        },
+        {
+          "id": "PAT-S02",
+          "name": "sheet_dims",
+          "regex": "(\\d+(?:\\.\\d+)?)\\s*[xX\u00d7]\\s*(\\d+(?:\\.\\d+)?)\\s*(mm|cm|in|ft)?",
+          "output_field": "dimensions",
+          "priority": 1
+        }
+      ]
+    },
+    "raw_material": {
+      "patterns": [
+        {
+          "id": "PAT-R01",
+          "name": "alloy_grade",
+          "regex": "\\b(\\d{4})-?([THOF]\\d{1,2})?\\b",
+          "output_field": "grade",
+          "priority": 1
+        }
+      ]
+    }
+  },
+  "thread_standards": {
+    "metric": {
+      "pattern": "\\bM(\\d+(?:\\.\\d+)?)(?:\\s*[xX\u00d7]\\s*(\\d+(?:\\.\\d+)?))?\\b",
+      "example": "M8x1.25"
+    },
+    "unc": {
+      "pattern": "\\b(\\d+/\\d+|\\d+(?:\\.\\d+)?)-(\\d+)\\s*(?:UNC)?\\b",
+      "example": "1/4-20"
+    },
+    "unf": {
+      "pattern": "\\b(\\d+/\\d+|\\d+(?:\\.\\d+)?)-(\\d+)\\s*UNF\\b",
+      "example": "1/4-28"
+    },
+    "bsw": {
+      "pattern": "\\b(\\d+/\\d+|\\d+(?:\\.\\d+)?)\\s*BSW\\b",
+      "example": "1/4 BSW"
+    },
+    "bsp": {
+      "pattern": "\\b(\\d+/\\d+|\\d+(?:\\.\\d+)?)\\s*BSP[PT]?\\b",
+      "example": "1/8 BSP"
+    },
+    "npt": {
+      "pattern": "\\b(\\d+/\\d+|\\d+(?:\\.\\d+)?)\\s*NPT[F]?\\b",
+      "example": "1/8 NPT"
+    },
+    "pg": {
+      "pattern": "\\bPG\\s*(\\d+)\\b",
+      "example": "PG9"
+    }
   }
 }

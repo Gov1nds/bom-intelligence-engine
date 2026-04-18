@@ -40,6 +40,9 @@ class EngineConfig(BaseSettings):
     CONFIDENCE_AUTO_THRESHOLD: float = 0.85
     CONFIDENCE_REVIEW_REQUIRED_THRESHOLD: float = 0.50
 
+    # ML feature output (WP-10)
+    EMIT_ML_FEATURES: bool = False
+
     model_config = {"env_file": ".env", "case_sensitive": True}
 
     def validate_production(self) -> None:

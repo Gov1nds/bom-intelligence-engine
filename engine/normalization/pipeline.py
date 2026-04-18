@@ -1,7 +1,23 @@
-"""Normalization pipeline per PC-002, WF-NORM-001, GAP-035."""
+"""Normalization pipeline per PC-002, WF-NORM-001, GAP-035.
+
+Upgraded pipeline order:
+1. OCR healing
+2. Text normalization
+3. Tokenization
+4. Unit normalization
+5. Classification
+6. Domain dispatch
+7. Domain-aware confidence scoring
+8. Part master matching
+9. Canonical output
+10. Review & uncertainty flags
+11. Learning signals
+"""
 from __future__ import annotations
+
 import re
 import time
+from typing import Any
 
 from core.config import config
 from core.events import EventTypes, build_event
@@ -10,12 +26,15 @@ from core.schemas import (
     NormalizationRequest, NormalizationResponse, NormalizationTraceOutput,
     NormalizedItem,
 )
+from engine.normalization.ocr_healer import OcrHealer
 from engine.normalization.part_master_matcher import match_against_part_master
 from engine.normalization.tokenizer import Token, tokenize_raw_text
 from engine.normalization.unit_converter import normalize_units
 from engine.normalization.text_normalizer import normalize_text
 from engine.classification.classifier import classify_from_tokens
 from engine.specs.spec_extractor import extract_specs_from_tokens
+from engine.specs.domain_dispatcher import DomainDispatcher
+from engine.scoring.confidence import compute_domain_confidence
 from engine.canonical.canonical_output import build_canonical_output
 from engine.review.review_flags import detect_review_and_uncertainty_flags
 from engine.learning.signal_builder import build_learning_signals
@@ -23,6 +42,8 @@ from engine.learning.signal_builder import build_learning_signals
 
 SPLIT_PATTERN = re.compile(r"\b(and|&|\+|with)\b", re.I)
 
+_ocr_healer = OcrHealer()
+_domain_dispatcher = DomainDispatcher()
 
 
 def _extract_mpn(tokens: list[Token]) -> str | None:
@@ -30,7 +51,6 @@ def _extract_mpn(tokens: list[Token]) -> str | None:
         if t.token_type == "part_number_fragment":
             return t.value
     return None
-
 
 
 def _extract_quantity(tokens: list[Token]) -> int | None:
@@ -44,7 +64,6 @@ def _extract_quantity(tokens: list[Token]) -> int | None:
     return None
 
 
-
 def _extract_unit(tokens: list[Token]) -> str | None:
     for t in tokens:
         if t.token_type == "value_unit_pair":
@@ -52,7 +71,6 @@ def _extract_unit(tokens: list[Token]) -> str | None:
                 if u in t.value.lower():
                     return u
     return None
-
 
 
 def _detect_split(raw_text: str, tokens: list[Token]) -> tuple[bool, list[dict] | None]:
@@ -63,28 +81,10 @@ def _detect_split(raw_text: str, tokens: list[Token]) -> tuple[bool, list[dict] 
     return False, None
 
 
-
 def _compute_field_completeness(tokens: list[Token]) -> float:
     types_found = {t.token_type for t in tokens}
     key_types = {"value_unit_pair", "dimension", "material_reference", "part_number_fragment"}
     return len(types_found & key_types) / len(key_types)
-
-
-
-def _compute_confidence(
-    classification_confidence: float,
-    best_match_similarity: float,
-    token_coverage: float,
-    field_completeness: float,
-) -> float:
-    score = (
-        classification_confidence * 0.35
-        + best_match_similarity * 0.30
-        + token_coverage * 0.15
-        + field_completeness * 0.20
-    )
-    return round(min(1.0, max(0.0, score)), 4)
-
 
 
 def _compute_ambiguity_flags(
@@ -117,6 +117,14 @@ def _compute_ambiguity_flags(
     return flags
 
 
+def _merge_attributes(spec_attrs: dict[str, Any], domain_attrs: dict[str, Any]) -> dict[str, Any]:
+    """Merge domain extractor attributes into spec attributes. Spec wins on conflict."""
+    merged = dict(spec_attrs)
+    for key, value in domain_attrs.items():
+        if value is not None and key not in merged:
+            merged[key] = value
+    return merged
+
 
 def normalize_bom_line(
     request: NormalizationRequest, part_master_index: object | None = None
@@ -125,15 +133,46 @@ def normalize_bom_line(
     t0 = time.monotonic()
     bom_line_id_str = str(request.bom_line_id)
 
-    normalized_text, text_trace = normalize_text(request.raw_text)
+    # 1. OCR healing
+    try:
+        healed_text, healing_ops = _ocr_healer.heal(request.raw_text)
+        ocr_healing_applied = len(healing_ops) > 0
+    except Exception:
+        healed_text = request.raw_text
+        healing_ops = []
+        ocr_healing_applied = False
 
+    # 2. Text normalization
+    normalized_text, text_trace = normalize_text(healed_text)
+
+    # 3. Tokenization
     tokens = tokenize_raw_text(normalized_text)
+
+    # 4. Unit normalization
     normalized_tokens, unit_trace = normalize_units(tokens)
 
+    # 5. Classification
     category, subcategory, classification_confidence, classification_reason = (
         classify_from_tokens(normalized_tokens, normalized_text)
     )
 
+    # 6. Domain dispatch
+    try:
+        domain_result = _domain_dispatcher.dispatch(category, normalized_text, normalized_tokens)
+    except Exception:
+        from engine.specs.extractors.base import DomainExtractionResult
+        domain_result = DomainExtractionResult()
+
+    # Also run existing spec extractor for backward compat
+    spec_json = extract_specs_from_tokens(normalized_tokens, normalized_text)
+
+    # Merge domain attributes
+    existing_attrs = spec_json.get("attributes", {}) if isinstance(spec_json, dict) else {}
+    merged_attrs = _merge_attributes(existing_attrs, domain_result.attributes)
+    if merged_attrs:
+        spec_json["attributes"] = merged_attrs
+
+    # 7. Confidence scoring
     mpn = _extract_mpn(normalized_tokens)
     candidates = match_against_part_master(
         normalized_tokens, normalized_text, category, mpn=mpn,
@@ -141,17 +180,30 @@ def normalize_bom_line(
     )
     best_match = candidates[0] if candidates else None
 
-    spec_json = extract_specs_from_tokens(normalized_tokens, normalized_text)
-
     word_count = max(len(normalized_text.split()), 1)
     token_coverage = min(1.0, len(normalized_tokens) / word_count)
-    field_completeness = _compute_field_completeness(normalized_tokens)
-    confidence = _compute_confidence(
-        classification_confidence,
-        best_match.similarity_score if best_match else 0.0,
-        token_coverage,
-        field_completeness,
-    )
+
+    try:
+        confidence_breakdown = compute_domain_confidence(
+            category=category,
+            classification_confidence=classification_confidence,
+            attributes=merged_attrs,
+            token_coverage=token_coverage,
+            missing_critical=domain_result.missing_critical,
+            ambiguity_flags=[],
+            ocr_healing_applied=ocr_healing_applied,
+        )
+        confidence = confidence_breakdown.overall
+    except Exception:
+        field_completeness = _compute_field_completeness(normalized_tokens)
+        confidence = round(min(1.0, max(0.0,
+            classification_confidence * 0.35
+            + (best_match.similarity_score if best_match else 0.0) * 0.30
+            + token_coverage * 0.15
+            + field_completeness * 0.20
+        )), 4)
+
+    confidence = round(min(1.0, confidence + domain_result.confidence_boost), 4)
 
     review_required = confidence < config.CONFIDENCE_AUTO_THRESHOLD
     review_reason = None
@@ -160,6 +212,7 @@ def normalize_bom_line(
     elif confidence < config.CONFIDENCE_AUTO_THRESHOLD:
         review_reason = "Confidence below auto-normalize threshold; human review recommended"
 
+    # 9. Canonical output
     canonical_output = build_canonical_output(category, subcategory, normalized_text, spec_json)
     part_name = canonical_output["canonical_name"] or (
         best_match.canonical_name
@@ -168,6 +221,7 @@ def normalize_bom_line(
     )
     canonical_key = canonical_output["normalized_part_key"]
 
+    # 10. Review flags
     split_detected, split_candidates = _detect_split(normalized_text, tokens)
     ambiguity_flags = _compute_ambiguity_flags(tokens, candidates, confidence)
     review_flags, uncertainty_flags = detect_review_and_uncertainty_flags(
@@ -178,6 +232,8 @@ def normalize_bom_line(
         normalized_text=normalized_text,
         ambiguity_flags=[f.flag_type for f in ambiguity_flags],
     )
+
+    # 11. Learning signals
     learning_signals = build_learning_signals(
         raw_input=request.raw_text,
         normalized_text=normalized_text,
@@ -189,6 +245,21 @@ def normalize_bom_line(
         review_flags=review_flags,
         uncertainty_flags=uncertainty_flags,
     )
+
+    # ML features if enabled
+    if config.EMIT_ML_FEATURES:
+        try:
+            from engine.ml.feature_builder import build_feature_vector
+            from engine.ml.embedding_signal import build_embedding_signal
+            learning_signals["ml_feature_vector"] = build_feature_vector(
+                category, merged_attrs, confidence, review_flags + uncertainty_flags)
+            learning_signals["embedding_signal"] = build_embedding_signal(
+                canonical_output["canonical_name"], category, merged_attrs)
+        except Exception:
+            pass
+
+    learning_signals["domain_extraction_method"] = domain_result.extraction_method
+    learning_signals["missing_critical_attributes"] = domain_result.missing_critical
 
     processing_time_ms = (time.monotonic() - t0) * 1000
     trace = NormalizationTraceOutput(
